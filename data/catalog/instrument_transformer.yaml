@@ -1,0 +1,176 @@
+# SubstationIQ Test Catalog — Instrument Transformers (CT / PT / CVT)
+# SAMPLE DATA for demonstration. Values are indicative.
+
+equipment_class: Instrument Transformer
+aliases: [CT, PT, CVT, current transformer, potential transformer, voltage transformer, instrument transformer]
+
+description: Current, potential and capacitive voltage transformers used for metering and protection.
+
+standards:
+  - code: IEC 61869-2
+    title: "Instrument transformers — Part 2: Additional requirements for current transformers"
+    body: IEC
+    scope_note: CT requirements and tests.
+  - code: IEC 61869-5
+    title: "Instrument transformers — Part 5: Additional requirements for capacitor voltage transformers"
+    body: IEC
+    scope_note: CVT requirements.
+  - code: IEEE C57.13
+    title: IEEE Standard Requirements for Instrument Transformers
+    body: IEEE
+    scope_note: General instrument transformer requirements.
+
+tests:
+  - name: Ratio and Polarity Test
+    aliases: [ratio test, polarity test, turn ratio CT]
+    category: commissioning
+    purpose: Verify the turns ratio and polarity markings against nameplate before commissioning.
+    frequency_note: Commissioning and after any through-fault.
+    summary: Primary injection or ratio-meter method on all taps.
+    equipment:
+      - instrument: CT analyser / ratio meter
+        note: Measures ratio, polarity and excitation in one pass.
+      - instrument: Primary injection set (if no analyser)
+    safety:
+      - Never open-circuit a CT secondary under load — short before disconnecting.
+      - Isolate the primary and earth both sides with permit-to-work.
+    steps:
+      - no: 1
+        type: safety
+        text: Verify primary isolation and earthing; confirm secondary shorting links in place.
+      - no: 2
+        type: prep
+        text: Connect the CT analyser to primary and secondary terminals.
+      - no: 3
+        type: action
+        text: Measure ratio and polarity on each tap/core.
+      - no: 4
+        type: record
+        text: Compare with nameplate ratio and class (e.g. 0.2 s metering, 5P20 protection).
+    limits:
+      - parameter: Ratio error
+        value: Within class accuracy (e.g. ±0.2 % metering, ±5 % protection at ALF)
+        condition: Rated burden
+        source_ref: IEC 61869-2 accuracy classes
+    standards:
+      - code: IEC 61869-2
+      - code: IEEE C57.13
+    troubleshooting:
+      - symptom: Ratio outside class
+        cause: Shorted turns or wrong tap selection
+        action: Verify tap links; if shorted turns suspected, replace the CT.
+
+  - name: Insulation Resistance (CT/CVT)
+    aliases: [IR test CT]
+    category: routine
+    purpose: Verify secondary-to-earth and primary insulation condition.
+    frequency_note: Annually.
+    summary: 1–5 kV IR between secondaries and earth; primary IR where accessible.
+    equipment:
+      - instrument: Insulation tester 1–5 kV
+    safety:
+      - Isolate and earth; short and earth CT secondaries before any disconnection.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation, earthing and permit; short CT secondaries.
+      - no: 2
+        type: action
+        text: Measure IR of each secondary winding to earth and between windings.
+      - no: 3
+        type: record
+        text: Record values and compare with previous tests.
+    limits:
+      - parameter: Secondary winding IR
+        value: ≥ 100 MΩ
+        min_val: 100
+        unit: MΩ
+        condition: 1 kV test, dry conditions
+        source_ref: Utility practice (indicative)
+    standards:
+      - code: IEC 61869-2
+    troubleshooting:
+      - symptom: Secondary IR low
+        cause: Moisture in terminal box or damaged cable insulation
+        action: Dry terminal box, replace damaged cabling, re-test.
+
+  - name: Tan Delta and Capacitance (Bushing/Insulation)
+    aliases: [tan delta, power factor test, capacitance test]
+    category: diagnostic
+    purpose: >
+      Assess the condition of the main insulation by measuring dissipation
+      factor and capacitance against nameplate values.
+    frequency_note: Every 3 years for CVTs and bushings.
+    summary: 10 kV UST/GST measurement of C1/C2 and tan delta.
+    equipment:
+      - instrument: Capacitance and tan delta test set (10 kV)
+      - instrument: HV test leads with guard
+    safety:
+      - Apply working earths; test area barriered; induced-voltage risk on adjacent circuits.
+      - Discharge capacitances after test.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation, earthing, permit; barrier the test area.
+      - no: 2
+        type: prep
+        text: Disconnect the CVT primary; identify C1/C2 test taps per OEM drawing.
+      - no: 3
+        type: action
+        text: Measure capacitance and tan delta of C1 and C2 at 10 kV.
+      - no: 4
+        type: record
+        text: Compare with nameplate and previous results; discharge after test.
+    limits:
+      - parameter: Tan delta
+        value: ≤ 0.7 % (new ≤ 0.3 % for resin); investigate if > 2× nameplate
+        max_val: 0.7
+        unit: "%"
+        condition: 10 kV, 20 °C corrected
+        source_ref: OEM manual (indicative)
+      - parameter: Capacitance deviation
+        value: Within ±5 % of nameplate; a drop indicates shorted capacitor elements
+        max_val: 5
+        unit: "%"
+        condition: Same test mode as nameplate value
+        source_ref: OEM manual
+    standards:
+      - code: IEC 61869-5
+      - code: IEEE C57.13
+    troubleshooting:
+      - symptom: Capacitance reduced by several percent
+        cause: Shorted capacitor elements in the CVT stack
+        action: Plan replacement; verify intermediate voltage and ferroresonance damping.
+
+  - name: Knee-Point Voltage (Protection CT)
+    aliases: [knee point test, excitation curve, magnetisation curve]
+    category: commissioning
+    purpose: Verify the actual knee-point voltage meets the protection design requirement.
+    frequency_note: Commissioning and after major secondary work.
+    summary: Secondary excitation curve per IEC 61869-2 (Vk, Imag at Vk/2).
+    equipment:
+      - instrument: CT analyser or variac + ammeter
+        note: Capable of 1 kV+ for class PX cores.
+    safety:
+      - Open-circuit CT primary must be isolated; discharge core after test.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation and permit; short all unused cores.
+      - no: 2
+        type: action
+        text: Apply increasing secondary voltage; plot excitation curve to beyond the knee.
+      - no: 3
+        type: record
+        text: Determine Vk and excitation current at Vk/2; compare with design.
+    limits:
+      - parameter: Knee-point voltage
+        value: ≥ design value specified by the protection engineer (e.g. ≥ 400 V class PX)
+        condition: As per relay coordination study
+        source_ref: IEC 61869-2 class PX definition
+    standards:
+      - code: IEC 61869-2
+    troubleshooting:
+      - symptom: Measured Vk below design
+        cause: Remanence, winding fault or wrong core used
+        action: Demagnetise and re-test; if still low, review protection settings or replace core.

@@ -1,0 +1,36 @@
+# Core API
+fastapi==0.115.12
+uvicorn[standard]==0.29.0
+sqlalchemy==2.0.36
+alembic==1.12.0
+pydantic==2.9.2
+pydantic-settings==2.6.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.9
+httpx==0.27.0
+python-dotenv==1.0.1
+email-validator==2.1.1
+pyyaml==6.0.1
+
+# LLM providers (lightweight SDKs)
+google-generativeai==0.7.2
+groq==0.11.0
+ollama==0.3.0
+
+# NLP utilities
+rapidfuzz==3.8.0
+rank-bm25==0.2.2
+
+# PDF export (guided procedure reports)
+reportlab==4.2.2
+
+# Optional heavy deps (chromadb, sentence-transformers, spacy, pymupdf,
+# pdfplumber, python-docx, pytesseract, pillow, reportlab) live in
+# requirements-heavy.txt — install separately if needed.
+#   pip install -r requirements-heavy.txt
+
+# Dev / test
+pytest==8.2.0
+ruff==0.4.0

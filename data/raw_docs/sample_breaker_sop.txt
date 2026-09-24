@@ -1,0 +1,40 @@
+This sample SOP covers routine maintenance of HV circuit breakers. It is SAMPLE
+content for demonstration only.
+
+1. Scope
+
+This SOP applies to SF6 and vacuum circuit breakers from 11 kV to 220 kV.
+
+2. Contact Resistance Measurement
+
+Contact resistance is measured with a 100 A digital low-resistance ohmmeter.
+Isolate the breaker, earth both sides and obtain a permit. Measure each pole
+in the closed position. A typical acceptance limit is 100 micro-ohms or the
+OEM value, whichever is lower. Pole-to-pole variation greater than 50 percent
+indicates a problem contact.
+
+3. Timing Test
+
+Use a breaker analyser to record close, open and close-open operations.
+Pole dispersion should not exceed 2 ms. Compare velocity and travel curves
+with the OEM signature. Increased operating time suggests mechanism wear,
+sticking latches or low operating pressure.
+
+4. SF6 Gas Checks
+
+Measure moisture content with a dew-point analyser corrected to 20 degrees
+Celsius. A typical limit is 150 ppmv for breakers. Check density monitor
+settings and leak history. Do not vent SF6 to atmosphere; use gas handling
+carts with filtration.
+
+5. Operating Mechanism
+
+Inspect the mechanism for oil leaks (hydraulic) or pressure loss (pneumatic).
+Check auxiliary switches, anti-pumping function, and trip/close coil currents.
+Lubricate per the OEM schedule.
+
+6. Safety
+
+Switching operations for testing require the breaker isolated from the network
+with clear visible breaks. Earth both sides. Remote operation only, with
+personnel clear of the mechanism.

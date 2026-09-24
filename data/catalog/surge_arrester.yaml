@@ -1,0 +1,162 @@
+# SubstationIQ Test Catalog — Surge Arrester
+# SAMPLE DATA for demonstration. Values are indicative.
+
+equipment_class: Surge Arrester
+aliases: [arrestor, surge arrestor, lightning arrester, LA, arrester]
+description: Metal-oxide (ZnO) surge arresters 9 kV to 245 kV class with leakage-current monitoring.
+
+standards:
+  - code: IEC 60099-4
+    title: "Surge arresters — Part 4: Metal-oxide surge arresters without gaps"
+    body: IEC
+    scope_note: MO arrester requirements and tests.
+  - code: IEEE C62.11
+    title: IEEE Standard for Metal-Oxide Surge Arresters
+    body: IEEE
+    scope_note: MO arrester standard.
+
+tests:
+  - name: Insulation Resistance (Arrester)
+    aliases: [IR test arrester]
+    category: routine
+    purpose: Verify base insulation and housing condition.
+    frequency_note: Annually.
+    summary: 5 kV megger between live parts and earth with arrester disconnected.
+    equipment:
+      - instrument: Insulation tester 5 kV
+    safety:
+      - Arrester must be isolated and earthed; arresters can hold charge — discharge first.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation and permit; discharge the arrester base.
+      - no: 2
+        type: action
+        text: Measure IR from each live terminal to earthed base.
+      - no: 3
+        type: record
+        text: Record and compare with previous values.
+    limits:
+      - parameter: IR to earth
+        value: ≥ 1000 MΩ (varistor stack healthy)
+        min_val: 1000
+        unit: MΩ
+        condition: 5 kV, dry weather
+        source_ref: IEEE C62.11 guidance (indicative)
+    standards:
+      - code: IEC 60099-4
+    troubleshooting:
+      - symptom: IR below limit
+        cause: Cracked housing, moisture ingress or degraded base insulation
+        action: Inspect housing; replace the arrester if moisture confirmed.
+
+  - name: Leakage Current Measurement (Total and Resistive)
+    aliases: [leakage current test, third harmonic resistive current]
+    category: diagnostic
+    purpose: >
+      Detect ZnO varistor degradation by measuring total leakage current and its
+      resistive (third-harmonic) component.
+    frequency_note: Every 2 years, or continuous with monitors.
+    summary: Clamp-on leakage measurement; resistive component via analyser.
+    equipment:
+      - instrument: Leakage current analyser with clamp CT
+        note: Separates resistive and capacitive components.
+      - instrument: Insulated operating rod (for hot-line clamping)
+    safety:
+      - Maintain live-line clearances when clamping on in-service arresters; use insulated tools and PPE.
+      - Never touch the arrester base or counter during operation.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit-to-work; verify clearances and PPE for live measurement.
+      - no: 2
+        type: action
+        text: Clamp the earth lead of each arrester; record total current and resistive component.
+      - no: 3
+        type: record
+        text: Trend against commissioning values; sudden rises indicate degradation.
+    limits:
+      - parameter: Resistive leakage current
+        value: Trend-based; investigate if > 2× commissioning value
+        condition: Corrected for ambient temperature and humidity
+        source_ref: IEC 60099-5 monitoring guidance
+      - parameter: Total leakage current
+        value: Typically < 1 mA for distribution class; use OEM baseline
+        max_val: 1
+        unit: mA
+        condition: Per-phase, in service
+        source_ref: OEM manual (indicative)
+    standards:
+      - code: IEC 60099-4
+      - code: IEEE C62.11
+    troubleshooting:
+      - symptom: Resistive current doubled since commissioning
+        cause: Moisture ingress or varistor ageing
+        action: Plan thermography and replacement at next outage; increase monitoring frequency.
+
+  - name: Thermography (Arrester)
+    aliases: [thermal imaging, IR thermography]
+    category: diagnostic
+    purpose: Identify internally degraded arresters by abnormal thermal signature.
+    frequency_note: Annually before summer peak.
+    summary: IR scan of all three phases from a safe distance under stable load.
+    equipment:
+      - instrument: Thermal imaging camera
+        note: ≥ 320×240 resolution for overhead line work.
+    safety:
+      - Thermography is a live-line activity — maintain clearances; no contact.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit for live inspection; verify clearances.
+      - no: 2
+        type: action
+        text: Scan all three phases; note ambient and load conditions.
+      - no: 3
+        type: record
+        text: Compare phase-to-phase temperatures; a hotter phase indicates higher resistive current.
+    limits:
+      - parameter: Phase temperature deviation
+        value: "> 3–5 °C hotter than adjacent phases is significant"
+        max_val: 5
+        unit: °C
+        condition: Similar sun/wind exposure, stable load
+        source_ref: Utility practice (indicative)
+    standards:
+      - code: IEC 60099-5
+    troubleshooting:
+      - symptom: One phase consistently hotter
+        cause: Increased resistive leakage due to moisture or degraded varistors
+        action: Perform leakage-current test and plan replacement.
+
+  - name: Surge Counter and Discharge Recorder Check
+    aliases: [counter check, discharge counter]
+    category: routine
+    purpose: Verify the counter operates and matches fault/discharge records.
+    frequency_note: Annually.
+    summary: Inject test pulse to the counter; verify operation.
+    equipment:
+      - instrument: Counter test instrument (pulse injector)
+    safety:
+      - Treat the counter leads as live during test; do not open-circuit counter wiring in service.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit-to-work; confirm counter wiring arrangement.
+      - no: 2
+        type: action
+        text: Inject a test pulse; verify the counter increments.
+      - no: 3
+        type: record
+        text: Record reading; compare with line discharge/fault records.
+    limits:
+      - parameter: Counter operation
+        value: Counts every injected test pulse
+        condition: Per counter OEM instructions
+        source_ref: OEM manual
+    standards:
+      - code: IEC 60099-4
+    troubleshooting:
+      - symptom: Counter does not increment
+        cause: Failed counter coil or wiring fault
+        action: Repair/replace counter; check earth-lead continuity.

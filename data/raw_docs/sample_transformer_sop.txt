@@ -1,0 +1,43 @@
+This sample SOP covers routine maintenance of oil-filled power transformers in
+transmission substations. It is SAMPLE content for demonstration only.
+
+1. Scope
+
+This SOP applies to 33 kV–220 kV oil-filled power transformers with on-load tap
+changers and Buchholz protection.
+
+2. Monthly Checks
+
+- Check oil level in conservator and OLTC diverter.
+- Check silica-gel breather colour; replace crystals when two-thirds pink.
+- Record load, top-oil and winding temperatures.
+- Inspect for oil leaks around gaskets, radiators and valves.
+
+3. Insulation Resistance Testing
+
+The insulation resistance test is performed with a 5 kV megger. Isolate the
+transformer, apply working earths, and obtain a permit-to-work. Measure IR
+between HV and earth, LV and earth, and HV and LV for one minute. The
+polarisation index is the ratio of the 10-minute to the 1-minute reading.
+A polarisation index below 1.5 indicates moisture. Values must be corrected
+to 20 degrees Celsius for trending.
+
+4. Oil Sampling and DGA
+
+Draw oil from the bottom sample valve using a gas-tight syringe. Label the
+sample with date, time, load and top-oil temperature. Dissolved gas analysis
+detects incipient faults. Hydrogen above 100 ppm requires attention. Any
+acetylene in the main tank indicates arcing and must be investigated
+immediately. Interpret results using IEC 60599 ratio methods.
+
+5. Buchholz Relay Inspection
+
+Check the float and alarm circuit operation quarterly. Gas collected in the
+chamber should be analysed; combustible gas indicates an internal fault.
+Do not reset the alarm without investigating the cause.
+
+6. Safety
+
+All work requires a permit-to-work. Isolate, earth and verify dead before
+touching any terminal. Wear appropriate PPE including arc-rated clothing.
+Follow site switching procedures.

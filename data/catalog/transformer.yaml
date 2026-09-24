@@ -1,0 +1,296 @@
+# SubstationIQ Test Catalog — Power Transformer
+# SAMPLE DATA for demonstration. Values are indicative; always confirm against
+# the applicable OEM manual and utility standard before use.
+
+equipment_class: Power Transformer
+aliases: [transformer, power transformer, xfmr, power trafo]
+description: Oil-filled power transformers 33 kV and above with OLTC and Buchholz protection.
+
+standards:
+  - code: IEC 60076-1
+    title: "Power transformers — Part 1: General"
+    body: IEC
+    scope_note: General requirements, routine tests.
+  - code: IEC 60422
+    title: Mineral insulating oils — Supervision and maintenance guidance
+    body: IEC
+    scope_note: Oil quality limits and maintenance.
+  - code: IEC 60599
+    title: Mineral oil-impregnated electrical equipment — Interpretation of DGA results
+    body: IEC
+    scope_note: Dissolved gas analysis interpretation.
+  - code: IEEE C57.152
+    title: IEEE Guide for Diagnostic Field Testing of Fluid-Filled Power Transformers
+    body: IEEE
+    scope_note: Field diagnostic test procedures.
+  - code: CBIP Manual
+    title: CBIP Manual on Transformers
+    body: CBIP
+    scope_note: Indian utility practice for transformer maintenance.
+
+tests:
+  - name: Insulation Resistance (IR) and Polarisation Index (PI)
+    aliases: [IR test, megger test, insulation resistance test, PI test]
+    category: routine
+    purpose: >
+      Verify the dryness and integrity of the insulation system between windings
+      and between windings and earth. The polarisation index indicates whether
+      moisture or contamination is present.
+    frequency_note: Annually and after any incident suggestive of moisture ingress.
+    summary: >
+      5 kV / 10 kV megger test between HV-earth, LV-earth and HV-LV, with a
+      10-minute polarisation index reading.
+    equipment:
+      - instrument: Insulation tester (megger) 5 kV / 10 kV
+        note: Range ≥ 10 GΩ, guard terminal preferred.
+      - instrument: Temperature and humidity probe
+        note: For temperature correction of readings.
+      - instrument: Insulated test leads and earthing leads
+        note: Rated for test voltage.
+    safety:
+      - Isolate the transformer from all sources and apply working earths.
+      - Discharge windings to earth after every IR measurement (capacitive charge).
+      - Barrier off the test area; only authorised personnel inside during test.
+      - Do not apply test voltage with the tank open or personnel in contact.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm permit-to-work, isolation and earthing; verify the unit is de-energised.
+      - no: 2
+        type: prep
+        text: Disconnect and discharge all windings; clean bushings; record winding temperature.
+      - no: 3
+        type: action
+        text: Apply 5 kV (or 10 kV for ≥ 132 kV class) between HV winding and earthed LV + tank; record IR at 1 minute.
+      - no: 4
+        type: action
+        text: Repeat for LV winding to earth and HV to LV.
+      - no: 5
+        type: action
+        text: Continue the HV-earth reading to 10 minutes; compute PI = R10 / R1.
+      - no: 6
+        type: record
+        text: Record temperature-corrected values and compare with previous results (trend matters more than the absolute number).
+    limits:
+      - parameter: IR (1 min)
+        value: ≥ 1000 MΩ
+        min_val: 1000
+        unit: MΩ
+        condition: Corrected to 20 °C, new 33 kV class transformer
+        source_ref: CBIP Manual on Transformers, Table 5.2
+      - parameter: Polarisation Index
+        value: ≥ 1.5 (good ≥ 2.0); < 1.0 indicates moisture
+        min_val: 1.5
+        unit: ratio
+        condition: 10-minute reading, windings at ambient temperature
+        source_ref: IEEE C57.152 §6.2
+    standards:
+      - code: IEEE C57.152
+        clause: §6.2 — Insulation resistance and polarisation index
+      - code: IEC 60076-1
+      - code: CBIP Manual
+    troubleshooting:
+      - symptom: Low IR value between winding and earth
+        cause: Moisture in insulation or contaminated bushing surfaces
+        action: Dry out per OEM procedure (oil circulation heating); clean and dry bushings and re-test.
+      - symptom: PI below 1.0
+        cause: Wet insulation
+        action: Perform low-voltage drying and re-measure; investigate gaskets and breather.
+
+  - name: Winding Resistance
+    aliases: [winding resistance test, DC resistance]
+    category: routine
+    purpose: >
+      Detect broken strands, poor joints, tap-changer contact problems and
+      shorted turns by comparing per-phase DC resistance against factory values.
+    frequency_note: Every 3 years or after through-fault.
+    summary: DC micro-ohm measurement of each winding tap, compared to nameplate.
+    equipment:
+      - instrument: Winding resistance meter (DC, 10 A – 50 A)
+        note: Four-wire (Kelvin) measurement.
+      - instrument: Temperature probe
+        note: For resistance temperature correction.
+    safety:
+      - Isolate and earth the transformer before connecting test leads.
+      - Do not disconnect current leads while the inductive discharge is in progress.
+      - Wait for meter discharge indication before removing connections.
+    steps:
+      - no: 1
+        type: safety
+        text: Verify isolation, earthing and permit-to-work.
+      - no: 2
+        type: prep
+        text: Record tap position and winding temperature; use the same tap as the factory report.
+      - no: 3
+        type: action
+        text: Connect the meter across each phase winding; saturate the winding and take the stable reading.
+      - no: 4
+        type: action
+        text: Repeat on all taps of the OLTC range.
+      - no: 5
+        type: record
+        text: Correct readings to the factory reference temperature and compare (max deviation 2–3 %).
+    limits:
+      - parameter: Winding resistance deviation
+        value: ≤ 2–3 % from factory value; phase-to-phase unbalance ≤ 2 %
+        max_val: 3
+        unit: "%"
+        condition: Temperature-corrected to 75 °C, same tap position
+        source_ref: CBIP Manual on Transformers, §6
+    standards:
+      - code: IEC 60076-1
+        clause: Routine test 10.2 — Winding resistance
+      - code: CBIP Manual
+    troubleshooting:
+      - symptom: One phase reads high by several percent
+        cause: High-resistance joint or tap-changer contact wear
+        action: Inspect and re-torque connections; carry out OLTC contact inspection.
+
+  - name: Dissolved Gas Analysis (DGA)
+    aliases: [DGA, oil gas analysis, dissolved gas]
+    category: diagnostic
+    purpose: >
+      Detect incipient thermal or electrical faults inside the transformer by
+      analysing gases dissolved in the insulating oil.
+    frequency_note: Every 6 months for critical transformers; quarterly if gas trending.
+    summary: Oil sample analysed for H2, CH4, C2H6, C2H4, C2H2, CO, CO2; interpreted by key-gas and ratio methods.
+    equipment:
+      - instrument: Gas-tight glass sampling syringe
+        note: Per IEC 60567 sampling technique.
+      - instrument: Laboratory GC analyser
+        note: Off-site analysis.
+    safety:
+      - Sampling is performed on in-service equipment — use oil-sample valves only.
+      - Wear oil-resistant gloves and eye protection; dispose of waste oil correctly.
+      - Do not open any conservator or valve under pressure without a permit.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit for valve operation; confirm valve type and oil pressure state.
+      - no: 2
+        type: prep
+        text: Flush the sample valve; draw oil into a gas-tight syringe without aeration.
+      - no: 3
+        type: action
+        text: Label the sample (date, time, load, top-oil temperature) and send to the laboratory.
+      - no: 4
+        type: record
+        text: Interpret results using key-gas method and IEC ratio method; compare against previous samples.
+    limits:
+      - parameter: Hydrogen (H2)
+        value: < 100 ppm attention level
+        max_val: 100
+        unit: ppm
+        condition: In-service oil, interpretation per IEC 60599
+        source_ref: IEC 60599 Table 1
+      - parameter: Acetylene (C2H2)
+        value: < 1–2 ppm for non-OLTC tanks; any presence indicates arcing
+        max_val: 2
+        unit: ppm
+        condition: Transformer main tank
+        source_ref: IEC 60599 Table 1
+      - parameter: Total combustible gases
+        value: < 2000 ppm satisfactory, > 4600 ppm investigate immediately
+        max_val: 4600
+        unit: ppm
+        condition: Trend-based interpretation
+        source_ref: IEEE C57.104 (indicative)
+    standards:
+      - code: IEC 60599
+      - code: IEC 60422
+    troubleshooting:
+      - symptom: Rising hydrogen and methane
+        cause: Partial discharge or low-temperature thermal fault (< 300 °C)
+        action: Increase sampling frequency; plan PD survey and internal inspection at next outage.
+      - symptom: High acetylene
+        cause: Arcing (high-energy discharge)
+        action: Take the transformer out of service as per utility policy; internal inspection required.
+
+  - name: Oil Breakdown Voltage (BDV) and Moisture
+    aliases: [BDV test, oil dielectric test, oil moisture test]
+    category: routine
+    purpose: >
+      Verify the dielectric strength and water content of the insulating oil.
+    frequency_note: Annually.
+    summary: 2.5 mm gap BDV measurement and Karl Fischer moisture determination.
+    equipment:
+      - instrument: Oil BDV test set
+        note: 2.5 mm spherical electrodes, IEC 60156.
+      - instrument: Karl Fischer moisture titrator
+        note: Laboratory.
+    safety:
+      - Sample on in-service equipment using the oil-sample valve with a permit.
+      - BDV test set is a high-voltage device — keep the lid closed during test.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit for sampling; wear gloves and eye protection.
+      - no: 2
+        type: action
+        text: Draw oil into a clean, dry sample bottle; test BDV within 24 hours.
+      - no: 3
+        type: action
+        text: Perform six breakdowns, stir between each; report the mean of the last five.
+      - no: 4
+        type: record
+        text: Send a second sample for Karl Fischer moisture content.
+    limits:
+      - parameter: BDV (2.5 mm gap)
+        value: ≥ 55 kV for ≥ 145 kV class; ≥ 45 kV for ≤ 72.5 kV class
+        min_val: 45
+        unit: kV
+        condition: In-service oil, IEC 60422 guidance
+        source_ref: IEC 60422 Table 3
+      - parameter: Water content
+        value: ≤ 10 ppm (≤ 170 kV class) in service
+        max_val: 10
+        unit: ppm
+        condition: Oil temperature at sampling
+        source_ref: IEC 60422 Table 4
+    standards:
+      - code: IEC 60422
+    troubleshooting:
+      - symptom: BDV below 45 kV
+        cause: Moisture, particles or ageing by-products in oil
+        action: Oil filtration / regeneration; check breather silica-gel condition.
+
+  - name: Sweep Frequency Response Analysis (SFRA)
+    aliases: [SFRA, frequency response test]
+    category: diagnostic
+    purpose: >
+      Detect winding deformation, displacement or core movement by comparing
+      frequency response signatures with baseline traces.
+    frequency_note: After transport, through-fault, or every 6 years.
+    summary: 50-ohm swept measurement 20 Hz–2 MHz on all phases, both ends.
+    equipment:
+      - instrument: SFRA analyser
+        note: 20 Hz – 2 MHz sweep.
+      - instrument: Coaxial test leads and calibration kit
+        note: Same instrument/leads as baseline for comparability.
+    safety:
+      - Isolate, earth and permit-to-work before connecting.
+      - Disconnect bushing connections to avoid external resonances; restore and re-torque afterwards.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation, earthing and permit; remove external connections.
+      - no: 2
+        type: prep
+        text: Calibrate the analyser; note tap position.
+      - no: 3
+        type: action
+        text: Measure open-circuit end-to-end traces for each winding (HV ABC, LV abc).
+      - no: 4
+        type: record
+        text: Overlay with factory/previous traces and assess deviations.
+    limits:
+      - parameter: Trace deviation
+        value: No significant shift in resonant frequencies vs baseline (> 3 dB unexplained deviation at low frequencies is suspect)
+        condition: Same tap position and lead placement
+        source_ref: IEEE C57.149 guidance
+    standards:
+      - code: IEEE C57.152
+    troubleshooting:
+      - symptom: Large low-frequency deviation on one phase
+        cause: Winding deformation or core movement (possible transport damage or through-fault)
+        action: Perform internal inspection before re-energising.

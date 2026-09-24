@@ -1,0 +1,156 @@
+# SubstationIQ Test Catalog — Reactor
+# SAMPLE DATA for demonstration. Values are indicative.
+
+equipment_class: Reactor
+aliases: [shunt reactor, series reactor, smoothing reactor, reactor bank]
+description: Oil-filled shunt/series reactors used for reactive power compensation and harmonic filtering.
+
+standards:
+  - code: IEC 60076-6
+    title: "Power transformers — Part 6: Reactors"
+    body: IEC
+    scope_note: Reactor requirements and tests.
+  - code: IEC 60599
+    title: DGA interpretation
+    body: IEC
+    scope_note: Applies to oil-filled reactors.
+
+tests:
+  - name: Insulation Resistance (Reactor)
+    aliases: [IR test reactor]
+    category: routine
+    purpose: Verify winding-to-earth insulation integrity.
+    frequency_note: Annually.
+    summary: 5 kV megger winding-to-earth with 10-minute reading.
+    equipment:
+      - instrument: Insulation tester 5 kV
+      - instrument: Thermometer for correction
+    safety:
+      - Isolate, earth, permit; discharge winding after each reading.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation, earthing and permit-to-work.
+      - no: 2
+        type: action
+        text: Measure IR winding-to-earth at 1 and 10 minutes; compute PI.
+      - no: 3
+        type: record
+        text: Temperature-correct and compare with previous results.
+    limits:
+      - parameter: IR (1 min)
+        value: ≥ 1000 MΩ
+        min_val: 1000
+        unit: MΩ
+        condition: Corrected to 20 °C
+        source_ref: IEC 60076-6 / CBIP guidance (indicative)
+    standards:
+      - code: IEC 60076-6
+    troubleshooting:
+      - symptom: Falling IR trend
+        cause: Moisture ingress or oil contamination
+        action: Check oil BDV/moisture; plan dry-out.
+
+  - name: Winding Resistance (Reactor)
+    aliases: [reactor DC resistance]
+    category: routine
+    purpose: Detect conductor and joint degradation.
+    frequency_note: Every 3 years.
+    summary: DC measurement compared with factory values.
+    equipment:
+      - instrument: Winding resistance meter (10–50 A DC)
+    safety:
+      - Isolate and earth; allow inductive discharge before removing leads.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation and permit.
+      - no: 2
+        type: action
+        text: Measure resistance; wait for stable reading (large inductance).
+      - no: 3
+        type: record
+        text: Correct to reference temperature and compare with factory report.
+    limits:
+      - parameter: Resistance deviation
+        value: ≤ 3 % from factory value
+        max_val: 3
+        unit: "%"
+        condition: Temperature corrected
+        source_ref: Factory report / utility practice
+    standards:
+      - code: IEC 60076-6
+    troubleshooting:
+      - symptom: Resistance high by > 3 %
+        cause: Joint degradation or winding fault
+        action: Inspect terminations; schedule internal inspection if trend continues.
+
+  - name: Dissolved Gas Analysis (Reactor)
+    aliases: [reactor DGA]
+    category: diagnostic
+    purpose: Detect thermal faults in oil-filled reactors.
+    frequency_note: Every 6 months.
+    summary: Same method as transformer DGA; ratio methods per IEC 60599.
+    equipment:
+      - instrument: Gas-tight sampling syringe
+    safety:
+      - Sample valve permit; gloves and eye protection.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit for valve operation.
+      - no: 2
+        type: action
+        text: Draw gas-tight oil sample; send for GC analysis.
+      - no: 3
+        type: record
+        text: Trend gases against IEC 60599 attention levels.
+    limits:
+      - parameter: Hydrogen
+        value: < 100 ppm attention level
+        max_val: 100
+        unit: ppm
+        condition: In-service oil
+        source_ref: IEC 60599
+    standards:
+      - code: IEC 60599
+      - code: IEC 60076-6
+    troubleshooting:
+      - symptom: Rising ethylene/ethane
+        cause: Thermal fault in winding or core
+        action: Reduce loading if possible; plan inspection.
+
+  - name: Thermography and Noise/Vibration Check
+    aliases: [reactor thermography, vibration check]
+    category: routine
+    purpose: Detect hot spots and loose clamping via thermal and vibration survey.
+    frequency_note: Annually.
+    summary: IR scan of tank and connections; vibration/noise survey at rated current.
+    equipment:
+      - instrument: Thermal imaging camera
+      - instrument: Vibration meter / sound level meter
+    safety:
+      - Live-line IR scan — maintain clearances.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit for live inspection.
+      - no: 2
+        type: action
+        text: Scan tank, bushings and connections; record noise/vibration at defined points.
+      - no: 3
+        type: record
+        text: Compare with commissioning baseline.
+    limits:
+      - parameter: Connection temperature rise
+        value: No hot spot > 10 °C above similar connections
+        max_val: 10
+        unit: °C
+        condition: Similar load and exposure
+        source_ref: Utility practice
+    standards:
+      - code: IEC 60076-6
+    troubleshooting:
+      - symptom: Increased vibration/noise
+        cause: Loose core clamping or shielding failure
+        action: Inspect clamping bolts at next outage; verify earthing of core/shield.

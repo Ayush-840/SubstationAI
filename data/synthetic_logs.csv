@@ -1,0 +1,17 @@
+# SubstationIQ — Synthetic maintenance fault log
+# Columns: date,equipment,test,symptom,reading,probable_cause,action_taken
+2026-01-12,Power Transformer,DGA,"H2 rising over 3 samples",145 ppm,Partial discharge in HV winding,Planned PD survey
+2026-02-03,Power Transformer,IR/PI,"PI below 1.0 on HV-earth",0.8 ratio,Moisture ingress via breather,Drying cycle and breather replacement
+2026-02-15,Circuit Breaker,Contact Resistance,"Pole 2 resistance 180 uOhm",180 uOhm,Contact burning after 3 faults,Contact replacement
+2026-02-27,Circuit Breaker,SF6 Moisture,"Dew point 340 ppmv",340 ppmv,Seal leak on interrupter,Gas replacement and seal kit
+2026-03-08,Instrument Transformer,Tan Delta,"C1 tan delta 1.9 percent",1.9 %,Moisture in CVT capacitor stack,Replacement ordered
+2026-03-21,Surge Arrester,Leakage Current,"Resistive current doubled",0.42 mA,Varistor degradation,Arrester replaced at outage
+2026-04-02,Reactor,Winding Resistance,"Phase B +5% vs factory",5 % delta,Loose busbar joint,Re-torqued joint
+2026-04-18,Power Transformer,OLTC,"DGA of diverter shows arcing gases",C2H2 40 ppm,OLTC contact arcing,Diverter overhaul
+2026-05-06,Circuit Breaker,Timing,"Pole dispersion 4 ms on open",4 ms,Sticking latch, Mechanism lubrication and adjustment
+2026-05-19,Instrument Transformer,Knee Point,"Vk 320 V vs design 400 V",320 V,Remanence in core,Demagnetised and re-tested OK
+2026-06-01,Power Transformer,BDV,"Oil BDV 38 kV",38 kV,High moisture 24 ppm,Oil filtration plant mobilised
+2026-06-14,Surge Arrester,Counter,"Counter not incrementing",0 pulses,Counter coil failure,Counter replaced
+2026-07-02,Reactor,Thermography,"Tank hot spot 12 C above baseline",12 C delta,Core clamping looseness,Inspection scheduled
+2026-07-15,Power Transformer,Buchholz,"Gas alarm with 300 cc gas",300 cc,Combustible gas - internal arcing,Transformer removed from service
+2026-08-01,Circuit Breaker,IR,"IR across open pole 40 MOhm",40 MOhm,Interrupter surface contamination,Cleaned and re-tested

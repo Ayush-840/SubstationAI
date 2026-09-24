@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Databases / vector store
+*.db
+*.sqlite3
+data/chroma/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Env
+.env
+
+# OS
+.DS_Store
+
+# Test / build artifacts
+.coverage
+htmlcov/

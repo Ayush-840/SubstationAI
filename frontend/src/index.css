@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --rgb-bg: 246 248 250;
+  --rgb-surface: 255 255 255;
+  --rgb-border: 221 227 234;
+  --rgb-text: 20 32 43;
+  --rgb-muted: 91 107 123;
+  --rgb-primary: 11 95 255;
+  --rgb-accent: 0 166 166;
+  --rgb-warning: 245 163 0;
+  --rgb-danger: 217 45 32;
+  --rgb-success: 18 161 80;
+}
+
+.dark {
+  --rgb-bg: 14 22 33;
+  --rgb-surface: 22 33 46;
+  --rgb-border: 38 53 71;
+  --rgb-text: 230 237 245;
+  --rgb-muted: 159 176 193;
+  --rgb-primary: 77 141 255;
+  --rgb-accent: 44 200 200;
+  --rgb-warning: 255 183 51;
+  --rgb-danger: 255 107 94;
+  --rgb-success: 61 214 140;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-txt font-sans antialiased;
+  line-height: 1.5;
+}
+
+/* Visible focus ring for accessibility (DESIGN.md §9) */
+*:focus-visible {
+  outline: 2px solid rgb(var(--rgb-primary));
+  outline-offset: 2px;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-control px-4 py-2 text-sm font-medium
+           transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed
+           min-h-[44px];
+  }
+  .btn-primary {
+    @apply btn bg-primary text-white hover:opacity-90;
+  }
+  .btn-secondary {
+    @apply btn border border-brdr bg-surface hover:bg-bg;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-white hover:opacity-90;
+  }
+  .card {
+    @apply rounded-card border border-brdr bg-surface p-4;
+  }
+  .chip {
+    @apply inline-flex items-center rounded-full border border-brdr px-3 py-1.5 text-sm
+           cursor-pointer select-none transition-colors duration-150 min-h-[36px];
+  }
+  .chip-selected {
+    @apply border-primary bg-primary/10 text-primary;
+  }
+  .input {
+    @apply w-full rounded-control border border-brdr bg-surface px-3 py-2 text-sm
+           placeholder:text-muted min-h-[44px];
+  }
+  .pill {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}
+
+/* Blinking caret for streaming state */
+.stream-caret::after {
+  content: '▍';
+  animation: blink 1s step-start infinite;
+  color: rgb(var(--rgb-primary));
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

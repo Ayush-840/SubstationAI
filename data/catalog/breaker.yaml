@@ -1,0 +1,230 @@
+# SubstationIQ Test Catalog — Circuit Breaker
+# SAMPLE DATA for demonstration. Values are indicative.
+
+equipment_class: Circuit Breaker
+aliases: [breaker, cb, vacuum breaker, sf6 breaker, hv breaker]
+description: HV/MV circuit breakers — SF6 and vacuum types, 11 kV to 400 kV.
+
+standards:
+  - code: IEC 62271-100
+    title: "High-voltage switchgear and controlgear — Part 100: AC circuit-breakers"
+    body: IEC
+    scope_note: Ratings, routine and type tests.
+  - code: IEC 62271-1
+    title: Common specifications for HV switchgear
+    body: IEC
+    scope_note: Service conditions, insulation levels.
+  - code: IEEE C37.09
+    title: IEEE Standard Test Procedure for AC High-Voltage Circuit Breakers
+    body: IEEE
+    scope_note: Field test procedures.
+
+tests:
+  - name: Contact Resistance (DLRO)
+    aliases: [contact resistance, DCRM, micro-ohm test, static resistance]
+    category: routine
+    purpose: >
+      Detect degradation of main contacts and bolted joints by measuring the
+      DC millivolt-drop resistance across each pole.
+    frequency_note: Every 2 years and after every 5,000 operations or 2,000 fault-current interruptions.
+    summary: 100 A DC across each pole; µΩ reading compared with OEM value.
+    equipment:
+      - instrument: Micro-ohmmeter (DLRO) 100 A DC minimum
+        note: Four-wire measurement.
+      - instrument: Flexible current leads and sense clamps
+        note: Sense leads inside current leads, at the terminals.
+    safety:
+      - Isolate the breaker, earth both sides and obtain permit-to-work.
+      - Do not operate the breaker while the test set is connected.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation, earthing and permit-to-work.
+      - no: 2
+        type: prep
+        text: Clean terminal contact surfaces; connect current and sense leads per manual.
+      - no: 3
+        type: action
+        text: Inject 100 A DC; record the stable µΩ value for each pole.
+      - no: 4
+        type: record
+        text: Compare with OEM value and previous readings; repeat after slow-closing if high.
+    limits:
+      - parameter: Contact resistance per pole
+        value: ≤ 100 µΩ (typical; use OEM value), difference between poles ≤ 50 %
+        max_val: 100
+        unit: µΩ
+        condition: New condition, 100 A DC
+        source_ref: IEC 62271-100 / OEM manual
+    standards:
+      - code: IEC 62271-100
+      - code: IEEE C37.09
+    troubleshooting:
+      - symptom: Contact resistance above limit on one pole
+        cause: Contact burning, oxidation or loose terminal joint
+        action: Re-torque connections; if still high, inspect/replace main contacts at next outage.
+
+  - name: Timing Test (Contact Travel)
+    aliases: [breaker timing, travel test, velocity test]
+    category: routine
+    purpose: >
+      Verify operating times, contact synchronism and travel characteristics
+      against OEM curves to detect mechanism problems.
+    frequency_note: Every 3 years or per utility policy.
+    summary: Timing and motion analysis of close/open and CO operations on all poles.
+    equipment:
+      - instrument: Circuit breaker analyser with timing channels
+        note: 6+ channels plus analog motion input.
+      - instrument: Motion (travel) transducer and tripod
+        note: Mounts on the mechanism.
+    safety:
+      - Isolate and earth; permit-to-work required.
+      - Keep personnel clear of the mechanism during remote operations.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation, earthing and permit; clear the area.
+      - no: 2
+        type: prep
+        text: Connect timing channels and transducer; set auxiliary supply to nominal.
+      - no: 3
+        type: action
+        text: Perform close, open and close-open operations; record times, velocity, overtravel and rebound.
+      - no: 4
+        type: record
+        text: Compare with OEM curves and previous test results.
+    limits:
+      - parameter: Pole dispersion
+        value: ≤ 2 ms between poles (close and open)
+        max_val: 2
+        unit: ms
+        condition: Nominal auxiliary/supply voltage
+        source_ref: IEC 62271-100 (sync switching guidance)
+      - parameter: Operating time deviation
+        value: Within OEM tolerance (typically ±10 % or per type test)
+        condition: Compare with factory report
+        source_ref: OEM manual
+    standards:
+      - code: IEC 62271-100
+      - code: IEEE C37.09
+    troubleshooting:
+      - symptom: Operating time increased vs previous test
+        cause: Mechanism wear, sticking latch or low operating pressure
+        action: Inspect mechanism, check accumulator/pressure switches, lubricate per OEM schedule.
+
+  - name: SF6 Gas Quality and Moisture
+    aliases: [SF6 test, gas moisture, dew point test]
+    category: routine
+    purpose: >
+      Verify SF6 purity, moisture content and pressure to ensure dielectric and
+      arc-quenching performance.
+    frequency_note: Every 2 years.
+    summary: Dew-point measurement and gas quality check at rated density.
+    equipment:
+      - instrument: SF6 dew-point / moisture analyser
+        note: Measures ppmv at standard conditions.
+      - instrument: Gas handling cart (if top-up needed)
+        note: With filters; do not vent SF6 to atmosphere.
+    safety:
+      - SF6 and its decomposition products are hazardous — use gas handling equipment, not open venting.
+      - Wear gloves and avoid breathing released gas; follow the utility SF6 handling procedure.
+    steps:
+      - no: 1
+        type: safety
+        text: Permit-to-work; connect the analyser per the gas-handling procedure.
+      - no: 2
+        type: action
+        text: Measure dew point and moisture content; record temperature and pressure.
+      - no: 3
+        type: record
+        text: Compare with limits; check for leakage trends using density monitor records.
+    limits:
+      - parameter: SF6 moisture content
+        value: ≤ 150 ppmv at 20 °C, 1.013 bar (typical new-gas limit for breakers)
+        max_val: 150
+        unit: ppmv
+        condition: Corrected to standard conditions
+        source_ref: IEC 62271-1 / OEM manual (indicative)
+    standards:
+      - code: IEC 62271-1
+      - code: IEC 62271-100
+    troubleshooting:
+      - symptom: Moisture above limit
+        cause: Moisture ingress through seals or from internal components
+        action: Dry-gas treatment / gas replacement; leak check and seal replacement.
+
+  - name: Insulation Resistance (Breaker)
+    aliases: [IR test breaker, megger breaker]
+    category: routine
+    purpose: Verify insulation integrity of pole supports, interrupters and auxiliary circuits.
+    frequency_note: Every 2 years.
+    summary: 5 kV IR across open contacts and to earth; 500 V for control wiring.
+    equipment:
+      - instrument: Insulation tester 5 kV
+      - instrument: Insulation tester 500 V for auxiliary circuits
+    safety:
+      - Isolate and earth; disconnect control wiring sensitive to test voltage.
+    steps:
+      - no: 1
+        type: safety
+        text: Confirm isolation and permit-to-work.
+      - no: 2
+        type: action
+        text: With breaker open, measure IR across each pole; with closed, measure pole-to-earth.
+      - no: 3
+        type: action
+        text: Test auxiliary/control circuits at 500 V (disconnect electronic devices first).
+      - no: 4
+        type: record
+        text: Record values with temperature and compare with previous tests.
+    limits:
+      - parameter: IR across open pole
+        value: ≥ 1000 MΩ
+        min_val: 1000
+        unit: MΩ
+        condition: 5 kV, dry insulation
+        source_ref: OEM manual / IEEE C37.09 (indicative)
+    standards:
+      - code: IEEE C37.09
+    troubleshooting:
+      - symptom: Low IR across an open pole
+        cause: Contaminated interrupter surface or moisture
+        action: Clean interrupter externals; if internal, schedule interrupter inspection.
+
+  - name: Pre-commissioning Checks (132 kV class)
+    aliases: [pre-commissioning, commissioning checks]
+    category: commissioning
+    purpose: Verify the breaker is ready for service after installation.
+    frequency_note: Once, before energisation.
+    summary: Combined checklist — torque, gas density, timing, DCRM, IR, auxiliary functions.
+    equipment:
+      - instrument: Torque wrench
+      - instrument: Breaker analyser and micro-ohmmeter
+      - instrument: SF6 dew-point analyser
+    safety:
+      - Full permit-to-work; verify all earths and barriers before energisation steps.
+    steps:
+      - no: 1
+        type: safety
+        text: Verify earths on all sides; permit-to-work active.
+      - no: 2
+        type: action
+        text: Check terminal torque values, gas density at rated filling, and dew point.
+      - no: 3
+        type: action
+        text: Perform timing, DCRM and IR tests; check trip/close coils and anti-pumping.
+      - no: 4
+        type: record
+        text: Record all values in the commissioning report and sign off.
+    limits:
+      - parameter: Gas density
+        value: Rated filling pressure per nameplate at 20 °C
+        condition: Corrected to 20 °C
+        source_ref: OEM nameplate
+    standards:
+      - code: IEC 62271-100
+      - code: IEEE C37.09
+    troubleshooting:
+      - symptom: Gas density alarm on commissioning
+        cause: Leak at fittings or density monitor mis-set
+        action: Leak-check with soap/sniffer; replace seals; re-verify monitor settings.

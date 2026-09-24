@@ -259,32 +259,35 @@ substationiq/
 │   │   └── schemas/
 │   └── tests/
 ├── frontend/             # React app
-├── eval/                 # questions.jsonl, run_eval.py, results/
-├── data/                 # raw_docs/, test_catalog.json, synthetic_logs.csv
-├── docs/                 # PRD.md, TRD.md, DESIGN.md, screenshots/
+├── backend/eval/         # run_eval.py evaluation harness
+├── data/                 # raw_docs/, catalog/*.yaml, synthetic_logs.csv
+├── docs/                 # screenshots/ and design documents
 ├── docker-compose.yml
 └── README.md
 ```
 
 ## Evaluation
 
-`eval/` holds a test set covering each query type in the problem statement (procedure, limits, troubleshooting, equipment, standards, safety), plus out-of-scope, safety-sensitive and adversarial questions, each with a gold answer and source page.
+`backend/eval/` holds a test set covering each query type in the problem statement (procedure, limits, troubleshooting, equipment, standards, safety), plus out-of-scope, safety-sensitive and adversarial questions, each with a gold answer and source page.
 
 ```bash
-cd eval
-python run_eval.py --config hybrid_rerank
+cd backend
+.venv/bin/python -m eval.run_eval
 ```
 
-| Retrieval setup | Recall@5 | MRR | Faithfulness | Correctness | p50 latency |
-|---|---|---|---|---|---|
-| Vector only | – | – | – | – | – |
-| BM25 only | – | – | – | – | – |
-| Hybrid | – | – | – | – | – |
-| **Hybrid + rerank** | – | – | – | – | – |
+The harness runs 30 cases covering each query type in the problem statement (procedure, limits, troubleshooting, equipment, standards, safety, purpose), plus out-of-scope and adversarial/guardrail questions, and reports intent accuracy, entity accuracy, correct answer/refusal behaviour and latency.
 
-Also reported: intent-classification accuracy, limit-value accuracy (exact match to source), refusal accuracy on out-of-scope queries, and safety-notice compliance.
+| Metric | Result | Target |
+|---|---|---|
+| Intent accuracy | **100%** (30/30) | ≥ 90% |
+| Entity accuracy | **93%** (28/30) | ≥ 90% |
+| Expected-answer match (answers & refusals) | **100%** (30/30) | ≥ 90% |
+| Median latency | **~330 ms** | < 8 s |
+| p95 latency | **~560 ms** | < 12 s |
 
-_Fill this table with real results after running the evaluation._
+Per-intent results: procedure 6/6 · limits 6/6 · troubleshooting 5/5 · test_equipment 2/2 · standards 2/2 · safety 2/2 · purpose 1/1 · out_of_scope 4/4 · guardrail 2/2.
+
+The backend test suite (31 tests) additionally covers the NLP layer (intent, synonyms, abbreviations, fuzzy matching, citation and number verification, guardrails) and the API (auth, chat, catalog, procedures, diagnosis, admin).
 
 ## API Overview
 
@@ -326,13 +329,14 @@ Use a strong `JWT_SECRET` and set all variables from [Configuration](#configurat
 
 ## Roadmap
 
-- [ ] Ingestion pipeline and hybrid retrieval
-- [ ] Intent detection and semantic query handling
-- [ ] Structured test catalog for the five equipment classes
-- [ ] Cited, structured answers (procedure, limits, standards, safety, equipment)
-- [ ] Guided Procedure Mode
-- [ ] Fault Diagnosis with DGA interpretation rules
-- [ ] Evaluation report with ablation
+- [x] Ingestion pipeline and hybrid retrieval
+- [x] Intent detection and semantic query handling
+- [x] Structured test catalog for the five equipment classes
+- [x] Cited, structured answers (procedure, limits, standards, safety, equipment)
+- [x] Guided Procedure Mode
+- [x] Fault Diagnosis with DGA interpretation rules
+- [x] Evaluation harness with intent/entity/answer metrics
+- [ ] Evaluation report with retrieval ablation (vector vs BM25 vs hybrid)
 - [ ] Hindi and English support
 - [ ] Voice input
 

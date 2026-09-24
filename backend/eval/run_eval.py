@@ -1,9 +1,13 @@
 """Evaluation harness (TRD §13): intent accuracy, entity accuracy, limit exact
-match, refusal accuracy, safety compliance.
+match, refusal accuracy, safety compliance. Also supports a retrieval ablation
+(vector vs BM25 vs hybrid) measuring Hit@K and MRR@K per mode.
 
 Usage:
-    cd backend && .venv/bin/python -m eval.run_eval
+    cd backend && .venv/bin/python -m eval.run_eval          # full-pipeline eval
+    cd backend && .venv/bin/python -m eval.run_eval --ablation
+    cd backend && .venv/bin/python -m eval.run_eval --ablation --k 10
 """
+import argparse
 import json
 import sys
 import time
@@ -51,6 +55,106 @@ CASES = [
     ("acceptable contact resistance for a cb", "limits", "Circuit Breaker", True),
     ("what to do when leakage current is high on arrestor", "troubleshooting", "Surge Arrester", True),
 ]
+
+
+def run_ablation(k: int = 5) -> int:
+    """Retrieval ablation: vector vs BM25 vs hybrid (RRF), reranker off.
+
+    Gold relevance for a query = every indexed chunk whose equipment class
+    matches the query's gold equipment. A hit counts when the fused/filtered
+    result belongs to the gold class. Measures Hit@K, MRR@K and retrieval
+    latency per mode.
+    """
+    from rapidfuzz import fuzz
+
+    from app.catalog.lookup import CatalogLookup
+    from app.db.models import EquipmentClass
+    from app.nlp.normalise import normalize_query
+    from app.rag.retriever import retriever
+
+    if not retriever.enabled:
+        print("Retriever disabled (chromadb/sentence-transformers missing); "
+              "cannot run ablation. Install requirements-heavy.txt and seed.")
+        return 2
+    if retriever.collection.count() == 0:
+        print("Vector index is empty; run app.scripts.seed first.")
+        return 2
+
+    # Gold equipment per query, resolved from the same text the classifier sees.
+    db = SessionLocal()
+    lookup = CatalogLookup(db)
+    gold_ids: list = []
+    for query, gold_intent, gold_equipment, _ in CASES:
+        ec_id = None
+        if gold_equipment:
+            ec = lookup.find_equipment(gold_equipment)
+            ec_id = ec.id if ec else None
+        if ec_id is None:
+            # Fuzzy fallback over the equipment-class table (catches None golds
+            # whose text still names equipment).
+            text = normalize_query(query)
+            best_id, best_score = None, 0
+            for ec in db.query(EquipmentClass).all():
+                names = [ec.name] + list(ec.aliases or [])
+                for alias in names:
+                    if alias.lower() in text:
+                        score = 100
+                    else:
+                        score = int(fuzz.partial_ratio(text, alias))
+                    if score > best_score and score >= 75:
+                        best_id, best_score = ec.id, score
+            ec_id = best_id
+        gold_ids.append(ec_id)
+
+    cases = [c for c, gold in zip(CASES, gold_ids) if gold is not None]
+    gold_by_query = {c[0]: gold for c, gold in zip(CASES, gold_ids) if gold is not None}
+    db.close()
+
+    print(f"Ablation: {len(cases)}/{len(CASES)} eval queries with a gold equipment class; K={k}\n")
+
+    results: dict = {}
+    for mode in ("vector", "bm25", "hybrid"):
+        retriever.retrieval_mode = mode
+        hits_at_k = 0
+        reciprocal_ranks: list[float] = []
+        latencies: list[float] = []
+        for query, gold_intent, gold_equipment, expects_answer in cases:
+            t0 = time.perf_counter()
+            # Evaluate raw retrieval quality: no equipment filter, no reranker,
+            # so the three modes are compared on the same footing.
+            ranked = retriever.search(query, top_k_vector=50, top_k_bm25=50)
+            latencies.append((time.perf_counter() - t0) * 1000)
+
+            gold_id = gold_by_query[query]
+            rank = None
+            for i, hit in enumerate(ranked[:k]):
+                if hit.get("metadata", {}).get("equipment_class_id") == gold_id:
+                    rank = i + 1
+                    break
+            if rank is not None:
+                hits_at_k += 1
+                reciprocal_ranks.append(1.0 / rank)
+            else:
+                reciprocal_ranks.append(0.0)
+
+        n = len(cases)
+        latencies.sort()
+        results[mode] = {
+            "hit": hits_at_k / n,
+            "mrr": sum(reciprocal_ranks) / n,
+            "p50": latencies[len(latencies) // 2],
+        }
+        print(f"{mode:>8}: Hit@{k} {hits_at_k:>2}/{n} = {hits_at_k/n:6.1%}   "
+              f"MRR@{k} {results[mode]['mrr']:.3f}   "
+              f"p50 {results[mode]['p50']:6.1f} ms")
+
+    retriever.retrieval_mode = "hybrid"
+
+    best_hit = max(results, key=lambda m: results[m]["hit"])
+    best_mrr = max(results, key=lambda m: results[m]["mrr"])
+    print(f"\nBest Hit@{k}: {best_hit} ({results[best_hit]['hit']:.1%})   "
+          f"Best MRR@{k}: {best_mrr} ({results[best_mrr]['mrr']:.3f})")
+    return 0
 
 
 def main() -> int:
@@ -125,4 +229,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="SubstationIQ evaluation harness")
+    parser.add_argument("--ablation", action="store_true",
+                        help="run retrieval ablation (vector vs BM25 vs hybrid) instead of the full-pipeline eval")
+    parser.add_argument("--k", type=int, default=5,
+                        help="cutoff K for ablation Hit@K / MRR@K (default 5)")
+    args = parser.parse_args()
+    if args.ablation:
+        sys.exit(run_ablation(k=args.k))
     sys.exit(main())

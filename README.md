@@ -272,7 +272,8 @@ substationiq/
 
 ```bash
 cd backend
-.venv/bin/python -m eval.run_eval
+.venv/bin/python -m eval.run_eval             # full-pipeline eval (30 cases)
+.venv/bin/python -m eval.run_eval --ablation  # retrieval ablation (vector vs BM25 vs hybrid)
 ```
 
 The harness runs 30 cases covering each query type in the problem statement (procedure, limits, troubleshooting, equipment, standards, safety, purpose), plus out-of-scope and adversarial/guardrail questions, and reports intent accuracy, entity accuracy, correct answer/refusal behaviour and latency.
@@ -287,7 +288,17 @@ The harness runs 30 cases covering each query type in the problem statement (pro
 
 Per-intent results: procedure 6/6 · limits 6/6 · troubleshooting 5/5 · test_equipment 2/2 · standards 2/2 · safety 2/2 · purpose 1/1 · out_of_scope 4/4 · guardrail 2/2.
 
-The backend test suite (31 tests) additionally covers the NLP layer (intent, synonyms, abbreviations, fuzzy matching, citation and number verification, guardrails) and the API (auth, chat, catalog, procedures, diagnosis, admin).
+**Retrieval ablation** — vector vs BM25 vs hybrid (RRF), no reranker, raw retrieval over the indexed catalog chunks and sample docs; gold relevance = the query's gold equipment class. 26 of the 30 eval queries name an equipment class.
+
+| Retrieval mode | Hit@5 | MRR@5 | p50 latency |
+|---|---|---|---|
+| Vector only | 84.6% | **0.846** | 9.4 ms |
+| BM25 only | 92.3% | 0.728 | **3.0 ms** |
+| **Hybrid (RRF)** | **96.2%** | 0.766 | 10.8 ms |
+
+Hybrid gives the best recall: vector retrieval misses queries whose wording drifts from the indexed text, BM25 catches exact domain terms, and RRF fusion takes the union. Vector-only ranks its hits most confidently (highest MRR) but misses the most; BM25 is the fastest and more robust than vector on this small corpus. The shipped configuration uses hybrid + cross-encoder rerank.
+
+The backend test suite (34 tests) additionally covers the NLP layer (intent, synonyms, abbreviations, fuzzy matching, citation and number verification, guardrails) and the API (auth, chat, catalog, procedures, diagnosis, admin).
 
 ## API Overview
 

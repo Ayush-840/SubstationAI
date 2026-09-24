@@ -41,6 +41,9 @@ class Retriever:
         self.bm25 = None
         self.bm25_corpus: list = []
         self.chunk_id_map: list = []
+        # "hybrid" (default) fuses vector + BM25 via RRF; "vector" or "bm25"
+        # use a single source (used by the eval ablation and for debugging).
+        self.retrieval_mode: str = "hybrid"
         self._bm25_path = os.path.join(settings.CHROMA_PATH, "bm25_index.pkl")
         if self.enabled:
             try:
@@ -99,6 +102,13 @@ class Retriever:
         self.bm25 = BM25Okapi(self.bm25_corpus)
         self._save_bm25()
 
+    def replace_document_chunks(self, document_id: int, chunks) -> None:
+        """Replace all index entries for a document's chunks (re-seed support)."""
+        if not self.enabled:
+            return
+        self.remove_document_chunks(document_id)
+        self.add_chunks(chunks)
+
     def remove_document_chunks(self, document_id: int):
         if not self.enabled:
             return
@@ -120,29 +130,12 @@ class Retriever:
         finally:
             db.close()
 
-    def search(
+    def _vector_search(
         self,
-        query: str,
-        equipment_class_id: Optional[int] = None,
-        test_id: Optional[int] = None,
-        top_k_vector: int = 20,
-        top_k_bm25: int = 20,
+        query_embedding: List[float],
+        where: Dict,
+        top_k_vector: int,
     ) -> List[Dict[str, Any]]:
-        if not self.enabled:
-            return []
-
-        where = {}
-        if equipment_class_id:
-            where["equipment_class_id"] = equipment_class_id
-        if test_id:
-            where["test_id"] = test_id
-
-        try:
-            query_embedding = self.embed_model.encode(query).tolist()
-        except Exception:
-            logger.exception("Embedding failed")
-            return []
-
         vector_hits: List[Dict[str, Any]] = []
         try:
             vector_results = self.collection.query(
@@ -161,39 +154,87 @@ class Retriever:
                     })
         except Exception:
             logger.exception("Vector search failed")
+        return vector_hits
+
+    def _bm25_search(
+        self,
+        query: str,
+        where: Dict,
+        top_k_bm25: int,
+    ) -> List[Dict[str, Any]]:
+        bm25_hits: List[Dict[str, Any]] = []
+        if not self.bm25:
+            return bm25_hits
+        tokenized_query = query.split()
+        if not tokenized_query:
+            return bm25_hits
+        bm25_scores = self.bm25.get_scores(tokenized_query)
+        top_indices = sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:top_k_bm25]
+        from app.db.session import SessionLocal
+        from app.db.models import Chunk
+        db = SessionLocal()
+        try:
+            for idx in top_indices:
+                if bm25_scores[idx] <= 0:
+                    continue
+                chunk_id = int(self.chunk_id_map[idx])
+                chunk = db.query(Chunk).filter(Chunk.id == chunk_id).first()
+                if not chunk:
+                    continue
+                if where.get("equipment_class_id") and chunk.equipment_class_id != where["equipment_class_id"]:
+                    continue
+                if where.get("test_id") and chunk.test_id != where["test_id"]:
+                    continue
+                bm25_hits.append({
+                    "chunk_id": chunk_id,
+                    "score": float(bm25_scores[idx]),
+                    "text": chunk.text,
+                    "metadata": {"document_id": chunk.document_id,
+                                 "page_start": chunk.page_start,
+                                 "section_title": chunk.section_title,
+                                 "equipment_class_id": chunk.equipment_class_id,
+                                 "test_id": chunk.test_id},
+                })
+        finally:
+            db.close()
+        return bm25_hits
+
+    def search(
+        self,
+        query: str,
+        equipment_class_id: Optional[int] = None,
+        test_id: Optional[int] = None,
+        top_k_vector: int = 20,
+        top_k_bm25: int = 20,
+    ) -> List[Dict[str, Any]]:
+        if not self.enabled:
+            return []
+
+        where = {}
+        if equipment_class_id:
+            where["equipment_class_id"] = equipment_class_id
+        if test_id:
+            where["test_id"] = test_id
+
+        mode = self.retrieval_mode if self.retrieval_mode in ("vector", "bm25", "hybrid") else "hybrid"
+
+        vector_hits: List[Dict[str, Any]] = []
+        if mode in ("vector", "hybrid"):
+            try:
+                query_embedding = self.embed_model.encode(query).tolist()
+            except Exception:
+                logger.exception("Embedding failed")
+                return []
+            vector_hits = self._vector_search(query_embedding, where, top_k_vector)
 
         bm25_hits: List[Dict[str, Any]] = []
-        if self.bm25:
-            tokenized_query = query.split()
-            if tokenized_query:
-                bm25_scores = self.bm25.get_scores(tokenized_query)
-                top_indices = sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:top_k_bm25]
-                from app.db.session import SessionLocal
-                from app.db.models import Chunk
-                db = SessionLocal()
-                try:
-                    for idx in top_indices:
-                        if bm25_scores[idx] <= 0:
-                            continue
-                        chunk_id = int(self.chunk_id_map[idx])
-                        chunk = db.query(Chunk).filter(Chunk.id == chunk_id).first()
-                        if not chunk:
-                            continue
-                        if equipment_class_id and chunk.equipment_class_id != equipment_class_id:
-                            continue
-                        if test_id and chunk.test_id != test_id:
-                            continue
-                        bm25_hits.append({
-                            "chunk_id": chunk_id,
-                            "score": float(bm25_scores[idx]),
-                            "text": chunk.text,
-                            "metadata": {"document_id": chunk.document_id,
-                                         "page_start": chunk.page_start,
-                                         "section_title": chunk.section_title},
-                        })
-                finally:
-                    db.close()
+        if mode in ("bm25", "hybrid"):
+            bm25_hits = self._bm25_search(query, where, top_k_bm25)
 
+        if mode == "vector":
+            return vector_hits
+        if mode == "bm25":
+            return bm25_hits
         return self._reciprocal_rank_fusion(vector_hits, bm25_hits)
 
     def _reciprocal_rank_fusion(

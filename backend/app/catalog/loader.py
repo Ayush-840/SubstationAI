@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     EquipmentClass, Test, TestStep, TestEquipment, TestLimit,
     Standard, TestStandard, SafetyPrecaution, Troubleshooting, Source, Synonym,
-    Document, DocumentStatus,
+    Document, DocumentStatus, Chunk,
 )
 from app.core.paths import CATALOG_DIR, RAW_DOCS_DIR
+from app.catalog.lookup import CatalogLookup, format_catalog_for_context
 from app.db.session import SessionLocal
 
 
@@ -275,6 +276,98 @@ def load_catalog_to_db(db: Session) -> None:
                 ))
 
     db.commit()
+
+    try:
+        n = index_catalog_chunks()
+        if n:
+            print(f"Indexed {n} catalog test chunks into the vector store")
+    except Exception:
+        # Retrieval indexing is optional; catalog answers work without it.
+        pass
+
+
+def _get_catalog_document(db: Session) -> Document:
+    """Get or create the synthetic Document that backs catalog chunks."""
+    doc = db.query(Document).filter(Document.doc_type == "catalog").first()
+    if not doc:
+        doc = Document(
+            title="Test Catalog",
+            filename="test_catalog.yaml",
+            doc_type="catalog",
+            status=DocumentStatus.READY,
+            page_count=1,
+        )
+        db.add(doc)
+        db.commit()
+    return doc
+
+
+def build_catalog_chunks(db: Session) -> List[Chunk]:
+    """Create one retrievable Chunk row per catalog test.
+
+    Each chunk packs the test's purpose, equipment, steps, limits, standards,
+    safety and troubleshooting text, tagged with its equipment class and test
+    ids so retrieval filters and citations work. Rows live under the synthetic
+    "Test Catalog" document, so every downstream path (BM25 DB lookup,
+    citation building, equipment filters) behaves exactly like document chunks.
+    """
+    cat_doc = _get_catalog_document(db)
+
+    # Idempotent re-seed: drop previous catalog chunks (DB rows here; the
+    # caller handles vector-store cleanup via replace_document_chunks).
+    db.query(Chunk).filter(Chunk.document_id == cat_doc.id).delete()
+
+    chunks: List[Chunk] = []
+    for equip in db.query(EquipmentClass).all():
+        for test in db.query(Test).filter(Test.equipment_class_id == equip.id).all():
+            ctx = format_catalog_for_context(CatalogLookup(db), test.id)
+            if not ctx:
+                continue
+            parts = [
+                f"Test Catalog: {ctx['equipment_class']} — {ctx['test_name']}",
+                f"Purpose: {ctx['purpose']}" if ctx.get("purpose") else "",
+                f"Test equipment: {ctx['equipment']}" if ctx.get("equipment") else "",
+                f"Procedure: {ctx['steps']}" if ctx.get("steps") else "",
+                f"Acceptable limits: {ctx['limits']}" if ctx.get("limits") else "",
+                f"Applicable standards: {ctx['standards']}" if ctx.get("standards") else "",
+                f"Safety: {ctx['safety']}" if ctx.get("safety") else "",
+                f"Troubleshooting: {ctx['troubleshooting']}" if ctx.get("troubleshooting") else "",
+            ]
+            text = "\n".join(p for p in parts if p)
+            chunks.append(Chunk(
+                document_id=cat_doc.id,
+                page_start=None,
+                page_end=None,
+                section_title=f"Test Catalog — {ctx['equipment_class']}: {ctx['test_name']}",
+                text=text,
+                equipment_class_id=equip.id,
+                test_id=test.id,
+                chunk_index=0,
+                token_count=len(text.split()),
+            ))
+    db.add_all(chunks)
+    db.commit()
+    return chunks
+
+
+def index_catalog_chunks() -> int:
+    """Embed + index catalog chunks into the vector store; no-op when heavy
+    deps are unavailable. Re-seeding replaces the previous catalog vectors."""
+    try:
+        from app.rag.retriever import retriever
+    except Exception:
+        return 0
+    if not retriever.enabled:
+        return 0
+
+    db = SessionLocal()
+    try:
+        cat_doc = _get_catalog_document(db)
+        chunks = build_catalog_chunks(db)
+        retriever.replace_document_chunks(cat_doc.id, chunks)
+        return len(chunks)
+    finally:
+        db.close()
 
 
 def register_sample_documents(db: Session) -> None:

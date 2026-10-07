@@ -1,12 +1,23 @@
 """Load the YAML test catalog into the database."""
-from pathlib import Path
+
 from typing import List, Dict, Any
 import yaml
 from sqlalchemy.orm import Session
 from app.db.models import (
-    EquipmentClass, Test, TestStep, TestEquipment, TestLimit,
-    Standard, TestStandard, SafetyPrecaution, Troubleshooting, Source, Synonym,
-    Document, DocumentStatus, Chunk,
+    EquipmentClass,
+    Test,
+    TestStep,
+    TestEquipment,
+    TestLimit,
+    Standard,
+    TestStandard,
+    SafetyPrecaution,
+    Troubleshooting,
+    Source,
+    Synonym,
+    Document,
+    DocumentStatus,
+    Chunk,
 )
 from app.core.paths import CATALOG_DIR, RAW_DOCS_DIR
 from app.catalog.lookup import CatalogLookup, format_catalog_for_context
@@ -34,12 +45,14 @@ def load_standards(db: Session) -> None:
             seen.add(code)
             existing = db.query(Standard).filter(Standard.code == code).first()
             if not existing:
-                db.add(Standard(
-                    code=code,
-                    title=std.get("title", code),
-                    body=(std.get("body") or "IEC"),
-                    scope_note=std.get("scope_note", ""),
-                ))
+                db.add(
+                    Standard(
+                        code=code,
+                        title=std.get("title", code),
+                        body=(std.get("body") or "IEC"),
+                        scope_note=std.get("scope_note", ""),
+                    )
+                )
     db.commit()
 
 
@@ -78,29 +91,54 @@ def load_synonyms(db: Session) -> None:
         ("Reactor", "shunt reactor", "equipment"),
     ]
     for canonical, variant, kind in pairs:
-        exists = db.query(Synonym).filter(
-            Synonym.canonical == canonical,
-            Synonym.variant == variant,
-            Synonym.kind == kind,
-        ).first()
+        exists = (
+            db.query(Synonym)
+            .filter(
+                Synonym.canonical == canonical,
+                Synonym.variant == variant,
+                Synonym.kind == kind,
+            )
+            .first()
+        )
         if not exists:
             db.add(Synonym(canonical=canonical, variant=variant, kind=kind))
     db.commit()
 
 
-def _get_or_create_source(db: Session, cache: dict, doc: Document | None,
-                          ref: str | None, page: int | None = None,
-                          section: str | None = None) -> int | None:
+def _get_or_create_source(
+    db: Session,
+    cache: dict,
+    doc: Document | None,
+    ref: str | None,
+    page: int | None = None,
+    section: str | None = None,
+) -> int | None:
     """Create/reuse a Source row for a catalog reference string."""
     if not ref:
         return None
     key = (ref, page, section)
     if key in cache:
         return cache[key]
-    src = Source(document_id=doc.id if doc else None, page=page,
-                 section=section, url_or_ref=ref)
-    db.add(src)
-    db.flush()
+    # Look up an existing row first so re-running the seed (docker compose
+    # runs it on every start) does not duplicate sources.
+    src = (
+        db.query(Source)
+        .filter(
+            Source.url_or_ref == ref,
+            Source.page == page,
+            Source.section == section,
+        )
+        .first()
+    )
+    if src is None:
+        src = Source(
+            document_id=doc.id if doc else None,
+            page=page,
+            section=section,
+            url_or_ref=ref,
+        )
+        db.add(src)
+        db.flush()
     cache[key] = src.id
     return src.id
 
@@ -111,7 +149,11 @@ def load_catalog_to_db(db: Session) -> None:
 
     sample_docs = {}  # equipment name -> Document row (for source links)
     for name in ["Power Transformer", "Circuit Breaker"]:
-        doc = db.query(Document).filter(Document.filename.startswith("sample_" + name.split()[0].lower())).first()
+        doc = (
+            db.query(Document)
+            .filter(Document.filename.startswith("sample_" + name.split()[0].lower()))
+            .first()
+        )
         if doc:
             sample_docs[name] = doc
 
@@ -119,7 +161,9 @@ def load_catalog_to_db(db: Session) -> None:
 
     for equip_data in load_yaml_catalog():
         equip_name = equip_data["equipment_class"]
-        equip = db.query(EquipmentClass).filter(EquipmentClass.name == equip_name).first()
+        equip = (
+            db.query(EquipmentClass).filter(EquipmentClass.name == equip_name).first()
+        )
         if not equip:
             equip = EquipmentClass(
                 name=equip_name,
@@ -136,10 +180,14 @@ def load_catalog_to_db(db: Session) -> None:
 
         for test_data in equip_data.get("tests", []):
             test_name = test_data["name"]
-            test = db.query(Test).filter(
-                Test.name == test_name,
-                Test.equipment_class_id == equip.id,
-            ).first()
+            test = (
+                db.query(Test)
+                .filter(
+                    Test.name == test_name,
+                    Test.equipment_class_id == equip.id,
+                )
+                .first()
+            )
             if not test:
                 test = Test(
                     equipment_class_id=equip.id,
@@ -154,42 +202,69 @@ def load_catalog_to_db(db: Session) -> None:
                 db.flush()
 
             for i, step_data in enumerate(test_data.get("steps", []), 1):
-                existing_step = db.query(TestStep).filter(
-                    TestStep.test_id == test.id,
-                    TestStep.step_no == i,
-                ).first()
-                text = step_data["text"] if isinstance(step_data, dict) else str(step_data)
-                stype = step_data.get("type", "action") if isinstance(step_data, dict) else "action"
+                existing_step = (
+                    db.query(TestStep)
+                    .filter(
+                        TestStep.test_id == test.id,
+                        TestStep.step_no == i,
+                    )
+                    .first()
+                )
+                text = (
+                    step_data["text"] if isinstance(step_data, dict) else str(step_data)
+                )
+                stype = (
+                    step_data.get("type", "action")
+                    if isinstance(step_data, dict)
+                    else "action"
+                )
                 if existing_step:
                     existing_step.text = text
                     existing_step.step_type = stype
                 else:
-                    db.add(TestStep(test_id=test.id, step_no=i,
-                                    step_type=stype, text=text))
+                    db.add(
+                        TestStep(test_id=test.id, step_no=i, step_type=stype, text=text)
+                    )
 
             for item in test_data.get("equipment", []):
                 name_i = item["instrument"]
-                existing_eq = db.query(TestEquipment).filter(
-                    TestEquipment.test_id == test.id,
-                    TestEquipment.instrument_name == name_i,
-                ).first()
+                existing_eq = (
+                    db.query(TestEquipment)
+                    .filter(
+                        TestEquipment.test_id == test.id,
+                        TestEquipment.instrument_name == name_i,
+                    )
+                    .first()
+                )
                 if not existing_eq:
-                    db.add(TestEquipment(
-                        test_id=test.id,
-                        instrument_name=name_i,
-                        spec_note=item.get("note", ""),
-                        source_id=_get_or_create_source(db, source_cache, doc, item.get("source_ref")),
-                    ))
+                    db.add(
+                        TestEquipment(
+                            test_id=test.id,
+                            instrument_name=name_i,
+                            spec_note=item.get("note", ""),
+                            source_id=_get_or_create_source(
+                                db, source_cache, doc, item.get("source_ref")
+                            ),
+                        )
+                    )
 
             for limit_data in test_data.get("limits", []):
                 param = limit_data["parameter"]
-                existing_limit = db.query(TestLimit).filter(
-                    TestLimit.test_id == test.id,
-                    TestLimit.parameter == param,
-                ).first()
+                existing_limit = (
+                    db.query(TestLimit)
+                    .filter(
+                        TestLimit.test_id == test.id,
+                        TestLimit.parameter == param,
+                    )
+                    .first()
+                )
                 std = None
                 if limit_data.get("standard_id"):
-                    std = db.query(Standard).filter(Standard.code == limit_data["standard_id"]).first()
+                    std = (
+                        db.query(Standard)
+                        .filter(Standard.code == limit_data["standard_id"])
+                        .first()
+                    )
                 ref = limit_data.get("source_ref") or limit_data.get("source")
                 vals = {
                     "value_text": limit_data.get("value", ""),
@@ -203,14 +278,18 @@ def load_catalog_to_db(db: Session) -> None:
                 if existing_limit:
                     for k, v in vals.items():
                         setattr(existing_limit, k, v)
-                    existing_limit.source_id = _get_or_create_source(db, source_cache, doc, ref)
+                    existing_limit.source_id = _get_or_create_source(
+                        db, source_cache, doc, ref
+                    )
                 else:
-                    db.add(TestLimit(
-                        test_id=test.id,
-                        parameter=param,
-                        source_id=_get_or_create_source(db, source_cache, doc, ref),
-                        **vals,
-                    ))
+                    db.add(
+                        TestLimit(
+                            test_id=test.id,
+                            parameter=param,
+                            source_id=_get_or_create_source(db, source_cache, doc, ref),
+                            **vals,
+                        )
+                    )
 
             for std_ref in test_data.get("standards", []):
                 code = std_ref if isinstance(std_ref, str) else std_ref.get("code")
@@ -218,62 +297,106 @@ def load_catalog_to_db(db: Session) -> None:
                 if not std:
                     continue
                 clause = std_ref.get("clause", "") if isinstance(std_ref, dict) else ""
-                exists = db.query(TestStandard).filter(
-                    TestStandard.test_id == test.id,
-                    TestStandard.standard_id == std.id,
-                ).first()
+                exists = (
+                    db.query(TestStandard)
+                    .filter(
+                        TestStandard.test_id == test.id,
+                        TestStandard.standard_id == std.id,
+                    )
+                    .first()
+                )
                 if not exists:
-                    db.add(TestStandard(test_id=test.id, standard_id=std.id, clause_note=clause))
+                    db.add(
+                        TestStandard(
+                            test_id=test.id, standard_id=std.id, clause_note=clause
+                        )
+                    )
 
             for safety_data in test_data.get("safety", []):
-                text = safety_data if isinstance(safety_data, str) else safety_data.get("text", "")
+                text = (
+                    safety_data
+                    if isinstance(safety_data, str)
+                    else safety_data.get("text", "")
+                )
                 if not text:
                     continue
-                exists = db.query(SafetyPrecaution).filter(
-                    SafetyPrecaution.test_id == test.id,
-                    SafetyPrecaution.text == text,
-                ).first()
+                exists = (
+                    db.query(SafetyPrecaution)
+                    .filter(
+                        SafetyPrecaution.test_id == test.id,
+                        SafetyPrecaution.text == text,
+                    )
+                    .first()
+                )
                 if not exists:
-                    db.add(SafetyPrecaution(
-                        scope="test",
-                        test_id=test.id,
-                        text=text,
-                        mandatory=safety_data.get("mandatory", True) if isinstance(safety_data, dict) else True,
-                        source_id=_get_or_create_source(db, source_cache, doc,
-                                                        safety_data.get("source_ref") if isinstance(safety_data, dict) else None),
-                    ))
+                    db.add(
+                        SafetyPrecaution(
+                            scope="test",
+                            test_id=test.id,
+                            text=text,
+                            mandatory=safety_data.get("mandatory", True)
+                            if isinstance(safety_data, dict)
+                            else True,
+                            source_id=_get_or_create_source(
+                                db,
+                                source_cache,
+                                doc,
+                                safety_data.get("source_ref")
+                                if isinstance(safety_data, dict)
+                                else None,
+                            ),
+                        )
+                    )
 
             for ts_data in test_data.get("troubleshooting", []):
                 symptom = ts_data["symptom"]
-                exists = db.query(Troubleshooting).filter(
-                    Troubleshooting.test_id == test.id,
-                    Troubleshooting.symptom == symptom,
-                ).first()
+                exists = (
+                    db.query(Troubleshooting)
+                    .filter(
+                        Troubleshooting.test_id == test.id,
+                        Troubleshooting.symptom == symptom,
+                    )
+                    .first()
+                )
                 if not exists:
-                    db.add(Troubleshooting(
-                        test_id=test.id,
-                        symptom=symptom,
-                        probable_cause=ts_data["cause"],
-                        recommended_action=ts_data["action"],
-                        source_id=_get_or_create_source(db, source_cache, doc, ts_data.get("source_ref")),
-                    ))
+                    db.add(
+                        Troubleshooting(
+                            test_id=test.id,
+                            symptom=symptom,
+                            probable_cause=ts_data["cause"],
+                            recommended_action=ts_data["action"],
+                            source_id=_get_or_create_source(
+                                db, source_cache, doc, ts_data.get("source_ref")
+                            ),
+                        )
+                    )
 
         for safety_data in equip_data.get("general_safety", []):
-            text = safety_data if isinstance(safety_data, str) else safety_data.get("text", "")
+            text = (
+                safety_data
+                if isinstance(safety_data, str)
+                else safety_data.get("text", "")
+            )
             if not text:
                 continue
-            exists = db.query(SafetyPrecaution).filter(
-                SafetyPrecaution.equipment_class_id == equip.id,
-                SafetyPrecaution.scope == "equipment",
-                SafetyPrecaution.text == text,
-            ).first()
+            exists = (
+                db.query(SafetyPrecaution)
+                .filter(
+                    SafetyPrecaution.equipment_class_id == equip.id,
+                    SafetyPrecaution.scope == "equipment",
+                    SafetyPrecaution.text == text,
+                )
+                .first()
+            )
             if not exists:
-                db.add(SafetyPrecaution(
-                    scope="equipment",
-                    equipment_class_id=equip.id,
-                    text=text,
-                    mandatory=True,
-                ))
+                db.add(
+                    SafetyPrecaution(
+                        scope="equipment",
+                        equipment_class_id=equip.id,
+                        text=text,
+                        mandatory=True,
+                    )
+                )
 
     db.commit()
 
@@ -329,22 +452,28 @@ def build_catalog_chunks(db: Session) -> List[Chunk]:
                 f"Test equipment: {ctx['equipment']}" if ctx.get("equipment") else "",
                 f"Procedure: {ctx['steps']}" if ctx.get("steps") else "",
                 f"Acceptable limits: {ctx['limits']}" if ctx.get("limits") else "",
-                f"Applicable standards: {ctx['standards']}" if ctx.get("standards") else "",
+                f"Applicable standards: {ctx['standards']}"
+                if ctx.get("standards")
+                else "",
                 f"Safety: {ctx['safety']}" if ctx.get("safety") else "",
-                f"Troubleshooting: {ctx['troubleshooting']}" if ctx.get("troubleshooting") else "",
+                f"Troubleshooting: {ctx['troubleshooting']}"
+                if ctx.get("troubleshooting")
+                else "",
             ]
             text = "\n".join(p for p in parts if p)
-            chunks.append(Chunk(
-                document_id=cat_doc.id,
-                page_start=None,
-                page_end=None,
-                section_title=f"Test Catalog — {ctx['equipment_class']}: {ctx['test_name']}",
-                text=text,
-                equipment_class_id=equip.id,
-                test_id=test.id,
-                chunk_index=0,
-                token_count=len(text.split()),
-            ))
+            chunks.append(
+                Chunk(
+                    document_id=cat_doc.id,
+                    page_start=None,
+                    page_end=None,
+                    section_title=f"Test Catalog — {ctx['equipment_class']}: {ctx['test_name']}",
+                    text=text,
+                    equipment_class_id=equip.id,
+                    test_id=test.id,
+                    chunk_index=0,
+                    token_count=len(text.split()),
+                )
+            )
     db.add_all(chunks)
     db.commit()
     return chunks
@@ -376,27 +505,41 @@ def register_sample_documents(db: Session) -> None:
         doc = db.query(Document).filter(Document.filename == f.name).first()
         if doc:
             continue
-        db.add(Document(
-            title=f.stem.replace("_", " ").title(),
-            filename=f.name,
-            doc_type="sample SOP",
-            status=DocumentStatus.READY,
-            page_count=1,
-        ))
+        db.add(
+            Document(
+                title=f.stem.replace("_", " ").title(),
+                filename=f.name,
+                doc_type="sample SOP",
+                status=DocumentStatus.READY,
+                page_count=1,
+            )
+        )
     db.commit()
 
 
 def validate_catalog(db: Session) -> List[str]:
     errors: List[str] = []
-    limits_without_source = db.query(TestLimit).filter(TestLimit.source_id.is_(None)).all()
+    limits_without_source = (
+        db.query(TestLimit).filter(TestLimit.source_id.is_(None)).all()
+    )
     for limit in limits_without_source:
         test = db.query(Test).filter(Test.id == limit.test_id).first()
-        equip = db.query(EquipmentClass).filter(EquipmentClass.id == test.equipment_class_id).first()
-        errors.append(f"Limit without source: {equip.name} - {test.name} - {limit.parameter}")
+        equip = (
+            db.query(EquipmentClass)
+            .filter(EquipmentClass.id == test.equipment_class_id)
+            .first()
+        )
+        errors.append(
+            f"Limit without source: {equip.name} - {test.name} - {limit.parameter}"
+        )
 
     tests_without_steps = db.query(Test).filter(~Test.steps.any()).all()
     for test in tests_without_steps:
-        equip = db.query(EquipmentClass).filter(EquipmentClass.id == test.equipment_class_id).first()
+        equip = (
+            db.query(EquipmentClass)
+            .filter(EquipmentClass.id == test.equipment_class_id)
+            .first()
+        )
         errors.append(f"Test without steps: {equip.name} - {test.name}")
     return errors
 

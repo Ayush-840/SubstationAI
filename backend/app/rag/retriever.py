@@ -3,6 +3,7 @@
 If chromadb/sentence-transformers are not installed, retrieval falls back to
 a catalog-only mode (no document hits) so the API still works.
 """
+
 import logging
 import os
 import pickle
@@ -17,6 +18,7 @@ try:
     import chromadb
     from chromadb.config import Settings as ChromaSettings
     from rank_bm25 import BM25Okapi
+
     _CHROMA_OK = True
 except Exception:  # pragma: no cover - heavy optional dependency
     chromadb = None
@@ -26,6 +28,7 @@ except Exception:  # pragma: no cover - heavy optional dependency
 
 try:
     from sentence_transformers import SentenceTransformer
+
     _ST_OK = True
 except Exception:  # pragma: no cover
     SentenceTransformer = None
@@ -49,10 +52,14 @@ class Retriever:
             try:
                 self._init_backend()
             except Exception:
-                logger.exception("Retriever backend init failed; running without document retrieval")
+                logger.exception(
+                    "Retriever backend init failed; running without document retrieval"
+                )
                 self.enabled = False
         else:
-            logger.warning("chromadb/sentence-transformers not installed; document retrieval disabled")
+            logger.warning(
+                "chromadb/sentence-transformers not installed; document retrieval disabled"
+            )
 
     def _init_backend(self):
         os.makedirs(settings.CHROMA_PATH, exist_ok=True)
@@ -86,15 +93,22 @@ class Retriever:
         texts = [c.text for c in chunks]
         embeddings = self.embed_model.encode(texts).tolist()
         ids = [str(c.id) for c in chunks]
-        metadatas = [{
-            "document_id": c.document_id if c.document_id is not None else -1,
-            "page_start": c.page_start if c.page_start is not None else -1,
-            "page_end": c.page_end if c.page_end is not None else -1,
-            "section_title": c.section_title or "",
-            "equipment_class_id": c.equipment_class_id if c.equipment_class_id is not None else -1,
-            "test_id": c.test_id if c.test_id is not None else -1,
-        } for c in chunks]
-        self.collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+        metadatas = [
+            {
+                "document_id": c.document_id if c.document_id is not None else -1,
+                "page_start": c.page_start if c.page_start is not None else -1,
+                "page_end": c.page_end if c.page_end is not None else -1,
+                "section_title": c.section_title or "",
+                "equipment_class_id": c.equipment_class_id
+                if c.equipment_class_id is not None
+                else -1,
+                "test_id": c.test_id if c.test_id is not None else -1,
+            }
+            for c in chunks
+        ]
+        self.collection.add(
+            ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
+        )
 
         tokenized = [t.split() for t in texts]
         self.bm25_corpus.extend(tokenized)
@@ -120,6 +134,7 @@ class Retriever:
     def _rebuild_bm25(self):
         from app.db.session import SessionLocal
         from app.db.models import Chunk
+
         db = SessionLocal()
         try:
             all_chunks = db.query(Chunk).all()
@@ -146,12 +161,14 @@ class Retriever:
             )
             if vector_results["ids"] and vector_results["ids"][0]:
                 for i, chunk_id in enumerate(vector_results["ids"][0]):
-                    vector_hits.append({
-                        "chunk_id": int(chunk_id),
-                        "score": 1 - vector_results["distances"][0][i],
-                        "text": vector_results["documents"][0][i],
-                        "metadata": vector_results["metadatas"][0][i],
-                    })
+                    vector_hits.append(
+                        {
+                            "chunk_id": int(chunk_id),
+                            "score": 1 - vector_results["distances"][0][i],
+                            "text": vector_results["documents"][0][i],
+                            "metadata": vector_results["metadatas"][0][i],
+                        }
+                    )
         except Exception:
             logger.exception("Vector search failed")
         return vector_hits
@@ -169,9 +186,12 @@ class Retriever:
         if not tokenized_query:
             return bm25_hits
         bm25_scores = self.bm25.get_scores(tokenized_query)
-        top_indices = sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:top_k_bm25]
+        top_indices = sorted(
+            range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True
+        )[:top_k_bm25]
         from app.db.session import SessionLocal
         from app.db.models import Chunk
+
         db = SessionLocal()
         try:
             for idx in top_indices:
@@ -181,20 +201,40 @@ class Retriever:
                 chunk = db.query(Chunk).filter(Chunk.id == chunk_id).first()
                 if not chunk:
                     continue
-                if where.get("equipment_class_id") and chunk.equipment_class_id != where["equipment_class_id"]:
-                    continue
-                if where.get("test_id") and chunk.test_id != where["test_id"]:
-                    continue
-                bm25_hits.append({
-                    "chunk_id": chunk_id,
-                    "score": float(bm25_scores[idx]),
-                    "text": chunk.text,
-                    "metadata": {"document_id": chunk.document_id,
-                                 "page_start": chunk.page_start,
-                                 "section_title": chunk.section_title,
-                                 "equipment_class_id": chunk.equipment_class_id,
-                                 "test_id": chunk.test_id},
-                })
+                if where:
+                    # Support both flat filters and {"$and": [...]} form
+                    if "$and" in where:
+                        ok = True
+                        for clause in where["$and"]:
+                            field, expected = next(iter(clause.items()))
+                            actual = getattr(chunk, field, None)
+                            if actual != expected:
+                                ok = False
+                                break
+                        if not ok:
+                            continue
+                    else:
+                        mismatch = False
+                        for field, expected in where.items():
+                            if getattr(chunk, field, None) != expected:
+                                mismatch = True
+                                break
+                        if mismatch:
+                            continue
+                bm25_hits.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "score": float(bm25_scores[idx]),
+                        "text": chunk.text,
+                        "metadata": {
+                            "document_id": chunk.document_id,
+                            "page_start": chunk.page_start,
+                            "section_title": chunk.section_title,
+                            "equipment_class_id": chunk.equipment_class_id,
+                            "test_id": chunk.test_id,
+                        },
+                    }
+                )
         finally:
             db.close()
         return bm25_hits
@@ -211,12 +251,24 @@ class Retriever:
             return []
 
         where = {}
-        if equipment_class_id:
+        if equipment_class_id and test_id:
+            # Chroma requires $and when combining multiple metadata filters
+            where = {
+                "$and": [
+                    {"equipment_class_id": equipment_class_id},
+                    {"test_id": test_id},
+                ]
+            }
+        elif equipment_class_id:
             where["equipment_class_id"] = equipment_class_id
-        if test_id:
+        elif test_id:
             where["test_id"] = test_id
 
-        mode = self.retrieval_mode if self.retrieval_mode in ("vector", "bm25", "hybrid") else "hybrid"
+        mode = (
+            self.retrieval_mode
+            if self.retrieval_mode in ("vector", "bm25", "hybrid")
+            else "hybrid"
+        )
 
         vector_hits: List[Dict[str, Any]] = []
         if mode in ("vector", "hybrid"):

@@ -12,8 +12,17 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 IntentType = Literal[
-    "procedure", "limits", "troubleshooting", "test_equipment",
-    "standards", "safety", "purpose", "comparison", "out_of_scope"
+    "procedure",
+    "limits",
+    "troubleshooting",
+    "test_equipment",
+    "standards",
+    "safety",
+    "purpose",
+    "comparison",
+    "definition",
+    "maintenance_overview",
+    "out_of_scope",
 ]
 
 
@@ -37,23 +46,28 @@ Examples:
 7. "Why is polarisation index measured" -> {"intent": "purpose", "equipment": "Power Transformer", "test": "Insulation Resistance and Polarisation Index (PI)"}
 8. "Difference between IR and PI test" -> {"intent": "comparison", "equipment": "Power Transformer"}
 9. "What is the weather today" -> {"intent": "out_of_scope"}
+10. "What is a circuit breaker?" -> {"intent": "definition", "equipment": "Circuit Breaker"}
+11. "What maintenance tests are performed on a reactor?" -> {"intent": "maintenance_overview", "equipment": "Reactor"}
+12. "The breaker is taking longer than usual to open" -> {"intent": "troubleshooting", "equipment": "Circuit Breaker"}
 """
 
 
 def build_intent_prompt(query: str, context: list[str] | None = None) -> str:
     ctx = ""
     if context:
-        ctx = f"Previous conversation:\n" + "\n".join(context[-4:]) + "\n\n"
+        ctx = "Previous conversation:\n" + "\n".join(context[-4:]) + "\n\n"
 
     return f"""You are SubstationIQ's query understanding module. Classify the user's query into one of these intents:
-- procedure: steps to carry out a test
+- procedure: steps to carry out a test (only when user explicitly asks how / step-by-step)
 - limits: acceptable values, typical values, criteria
-- troubleshooting: probable causes and corrective actions for a problem
+- troubleshooting: probable causes and corrective actions for a problem or symptom
 - test_equipment: instruments required for a test
 - standards: which standard applies
 - safety: safety precautions, PPE, isolation
 - purpose: why a test is done, what it measures
 - comparison: difference between tests or methods
+- definition: what something is (equipment or concept definition — not a procedure)
+- maintenance_overview: which maintenance tests apply to an equipment class (list, not one procedure)
 - out_of_scope: not related to substation maintenance
 
 {INTENT_EXAMPLES}
@@ -73,35 +87,185 @@ standalone_query should be a self-contained version of the query with context re
 #   limits rule's "what should", which only fires on value questions
 #   ("what should the polarisation index be?").
 INTENT_RULES: list[tuple[str, list[str]]] = [
-    ("troubleshooting", ["what to do", "what now", "what should i do", "probable cause",
-                         "cause of", "causes", "root cause", "resolve", "fix",
-                         "not working", "went wrong", "high ", "low ", "dropping", "rising",
-                         "fail", "fault", "tripping", "alarm", "increased",
-                         "above limit", "below limit", "out of spec", "out of tolerance",
-                         "abnormal"]),
-    ("test_equipment", ["which instrument", "what instrument", "equipment needed",
-                        "equipment required", "instruments needed", "tools required",
-                        "test set", "which meter"]),
-    ("standards", ["which standard", "what standard", "standard covers", "standard applies",
-                   "iec", "ieee", " cbip", " cea", "refer to standard"]),
-    ("safety", ["safety", "precaution", "ppe", "permit to work", "permit-to-work",
-                "isolation", "earthing", "grounding"]),
-    ("limits", ["acceptable", "limit", "allowed value", "criteria", "typical value",
-                "range", "threshold", "how much", "permissible",
-                "what should", "expected value", "normal value", "nominal value"]),
-    ("procedure", ["how to", "how do i", "how is", "how can i", "steps", "procedure",
-                   "carry out", "conduct", "perform", "method of", "checklist"]),
+    (
+        "troubleshooting",
+        [
+            "what to do",
+            "what now",
+            "what should i do",
+            "probable cause",
+            "cause of",
+            "causes",
+            "root cause",
+            "resolve",
+            "fix",
+            "not working",
+            "went wrong",
+            "high ",
+            "low ",
+            "dropping",
+            "rising",
+            "fail",
+            "fault",
+            "tripping",
+            "alarm",
+            "increased",
+            "above limit",
+            "below limit",
+            "out of spec",
+            "out of tolerance",
+            "abnormal",
+            "taking longer",
+            "opening slowly",
+            "slow to open",
+            "slower than usual",
+        ],
+    ),
+    (
+        "maintenance_overview",
+        [
+            "maintenance tests",
+            "what maintenance",
+            "which maintenance",
+            "list of tests",
+            "list of maintenance",
+            "maintenance checks",
+            "tests are performed",
+            "tests are carried out",
+            "tests performed on",
+            "routine tests on",
+            "periodic tests on",
+            "overview of tests",
+            "which tests",
+        ],
+    ),
+    (
+        "test_equipment",
+        [
+            "which instrument",
+            "what instrument",
+            "equipment needed",
+            "equipment required",
+            "instruments needed",
+            "tools required",
+            "test set",
+            "which meter",
+        ],
+    ),
+    (
+        "standards",
+        [
+            "which standard",
+            "what standard",
+            "standard covers",
+            "standard applies",
+            "iec",
+            "ieee",
+            " cbip",
+            " cea",
+            "refer to standard",
+        ],
+    ),
+    (
+        "safety",
+        [
+            "safety",
+            "precaution",
+            "ppe",
+            "permit to work",
+            "permit-to-work",
+            "isolation",
+            "earthing",
+            "grounding",
+        ],
+    ),
+    (
+        "limits",
+        [
+            "acceptable",
+            "limit",
+            "allowed value",
+            "criteria",
+            "typical value",
+            "range",
+            "threshold",
+            "how much",
+            "permissible",
+            "what should",
+            "expected value",
+            "normal value",
+            "nominal value",
+            "universal",
+        ],
+    ),
+    (
+        "definition",
+        [
+            "what is a ",
+            "what is an ",
+            "what is the meaning of",
+            "define ",
+            "definition of",
+            "meaning of",
+        ],
+    ),
+    (
+        "procedure",
+        [
+            "how to",
+            "how do i",
+            "how is",
+            "how can i",
+            "steps",
+            "procedure",
+            "carry out",
+            "conduct",
+            "perform",
+            "method of",
+            "checklist",
+            "step-by-step",
+            "step by step",
+        ],
+    ),
     ("purpose", ["why ", "purpose of", "what does it measure", "significance of"]),
     ("comparison", ["difference between", " vs ", "versus", "compare"]),
 ]
 
 DOMAIN_KEYWORDS = [
-    "substation", "transformer", "breaker", "arrester", "arrestor", "reactor",
-    "current transformer", "potential transformer", "capacitive voltage transformer",
-    "insulation", "resistance", "contact", "dissolved gas analysis", "sweep frequency",
-    "tan delta", "leakage", "winding", "ratio", "oil", "sf6", "bushing", "tap changer",
-    "megger", "test", "safety", "maintenance", "earth", "isolation", "permit",
-    "polarisation", "burden", "knee point", "switchgear", "protection relay",
+    "substation",
+    "transformer",
+    "breaker",
+    "arrester",
+    "arrestor",
+    "reactor",
+    "current transformer",
+    "potential transformer",
+    "capacitive voltage transformer",
+    "insulation",
+    "resistance",
+    "contact",
+    "dissolved gas analysis",
+    "sweep frequency",
+    "tan delta",
+    "leakage",
+    "winding",
+    "ratio",
+    "oil",
+    "sf6",
+    "bushing",
+    "tap changer",
+    "megger",
+    "test",
+    "safety",
+    "maintenance",
+    "earth",
+    "isolation",
+    "permit",
+    "polarisation",
+    "burden",
+    "knee point",
+    "switchgear",
+    "protection relay",
 ]
 
 
@@ -111,12 +275,17 @@ class IntentClassifier:
         if settings.LLM_PROVIDER == "gemini" and settings.GEMINI_API_KEY:
             try:
                 import google.generativeai as genai
+
                 genai.configure(api_key=settings.GEMINI_API_KEY)
                 self._model = genai.GenerativeModel("gemini-1.5-flash")
             except Exception:
-                logger.warning("Gemini init failed; using rule-based intent classification")
+                logger.warning(
+                    "Gemini init failed; using rule-based intent classification"
+                )
 
-    def classify(self, query: str, conversation_history: list[str] | None = None) -> QueryUnderstanding:
+    def classify(
+        self, query: str, conversation_history: list[str] | None = None
+    ) -> QueryUnderstanding:
         normalized = normalize_query(query)
         expanded = synonym_manager.expand(normalized)
 
@@ -127,13 +296,41 @@ class IntentClassifier:
                 prompt = build_intent_prompt(expanded, conversation_history)
                 response = self._model.generate_content(prompt)
                 result = json.loads(response.text.strip().strip("```json").strip("```"))
-                result["standalone_query"] = expanded
                 if not entities["equipment"] and result.get("equipment"):
                     entities["equipment"] = [result["equipment"]]
                 if not entities["test"] and result.get("test"):
                     entities["test"] = [result["test"]]
+                intent = result.get("intent")
+                valid_intents = {
+                    "procedure",
+                    "limits",
+                    "troubleshooting",
+                    "test_equipment",
+                    "standards",
+                    "safety",
+                    "purpose",
+                    "comparison",
+                    "definition",
+                    "maintenance_overview",
+                    "out_of_scope",
+                }
+                if intent in valid_intents:
+                    return QueryUnderstanding(
+                        intent=intent,
+                        equipment=entities["equipment"][0]
+                        if entities["equipment"]
+                        else None,
+                        test=entities["test"][0] if entities["test"] else None,
+                        parameter=entities["parameter"][0]
+                        if entities["parameter"]
+                        else None,
+                        language=result.get("language", "en"),
+                        standalone_query=expanded,
+                    )
             except Exception:
-                logger.exception("LLM intent classification failed; rule-based fallback used")
+                logger.exception(
+                    "LLM intent classification failed; rule-based fallback used"
+                )
 
         return self._rule_based_fallback(expanded, entities)
 
@@ -148,15 +345,19 @@ class IntentClassifier:
 
         if intent is None:
             # Query mentions domain terms but no clear intent -> treat as general procedure
-            intent = "procedure" if any(kw in q for kw in DOMAIN_KEYWORDS) else "out_of_scope"
+            intent = (
+                "procedure"
+                if any(kw in q for kw in DOMAIN_KEYWORDS)
+                else "out_of_scope"
+            )
 
         if intent != "out_of_scope" and not any(kw in q for kw in DOMAIN_KEYWORDS):
             # An intent keyword alone (e.g. "how to boil an egg") is out of scope
             intent = "out_of_scope"
 
-        equipment = (entities["equipment"][0] if entities["equipment"] else None)
-        test = (entities["test"][0] if entities["test"] else None)
-        parameter = (entities["parameter"][0] if entities["parameter"] else None)
+        equipment = entities["equipment"][0] if entities["equipment"] else None
+        test = entities["test"][0] if entities["test"] else None
+        parameter = entities["parameter"][0] if entities["parameter"] else None
 
         # Follow-up handling: "what about for a breaker?" style short queries
         if conversation_history_short(query) and equipment is None:

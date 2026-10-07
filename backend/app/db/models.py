@@ -1,6 +1,16 @@
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey, Boolean, 
-    Float, JSON, Enum as SQLEnum, Index, UniqueConstraint
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    ForeignKey,
+    Boolean,
+    Float,
+    JSON,
+    Enum as SQLEnum,
+    Index,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -47,22 +57,26 @@ class EquipmentClass(Base):
     name = Column(String(100), unique=True, nullable=False)
     aliases = Column(JSON, default=list)
     description = Column(Text)
-    
+
     tests = relationship("Test", back_populates="equipment_class")
-    safety_precautions = relationship("SafetyPrecaution", back_populates="equipment_class")
+    safety_precautions = relationship(
+        "SafetyPrecaution", back_populates="equipment_class"
+    )
 
 
 class Test(Base):
     __tablename__ = "tests"
     id = Column(Integer, primary_key=True, index=True)
-    equipment_class_id = Column(Integer, ForeignKey("equipment_classes.id"), nullable=False)
+    equipment_class_id = Column(
+        Integer, ForeignKey("equipment_classes.id"), nullable=False
+    )
     name = Column(String(200), nullable=False)
     aliases = Column(JSON, default=list)
     category = Column(String(50))  # routine, diagnostic, commissioning
     purpose = Column(Text)
     frequency_note = Column(Text)
     summary = Column(Text)
-    
+
     equipment_class = relationship("EquipmentClass", back_populates="tests")
     steps = relationship("TestStep", back_populates="test", order_by="TestStep.step_no")
     equipment = relationship("TestEquipment", back_populates="test")
@@ -80,7 +94,7 @@ class TestStep(Base):
     step_type = Column(String(20))  # safety, prep, action, record
     text = Column(Text, nullable=False)
     source_id = Column(Integer, ForeignKey("sources.id"))
-    
+
     test = relationship("Test", back_populates="steps")
     source = relationship("Source")
 
@@ -92,7 +106,7 @@ class TestEquipment(Base):
     instrument_name = Column(String(200), nullable=False)
     spec_note = Column(Text)
     source_id = Column(Integer, ForeignKey("sources.id"))
-    
+
     test = relationship("Test", back_populates="equipment")
     source = relationship("Source")
 
@@ -111,7 +125,7 @@ class TestLimit(Base):
     source_id = Column(Integer, ForeignKey("sources.id"))
     verified_by = Column(String(100))
     verified_on = Column(DateTime)
-    
+
     test = relationship("Test", back_populates="limits")
     standard = relationship("Standard")
     source = relationship("Source")
@@ -122,9 +136,11 @@ class Standard(Base):
     id = Column(Integer, primary_key=True, index=True)
     code = Column(String(50), unique=True, nullable=False)
     title = Column(String(300), nullable=False)
-    body = Column(SQLEnum('IEC', 'IEEE', 'IS', 'CBIP', 'CEA', 'OEM'))
+    body = Column(
+        SQLEnum("IEC", "IEEE", "IS", "CBIP", "CEA", "OEM", name="standard_body")
+    )
     scope_note = Column(Text)
-    
+
     test_links = relationship("TestStandard", back_populates="standard")
 
 
@@ -134,7 +150,7 @@ class TestStandard(Base):
     test_id = Column(Integer, ForeignKey("tests.id"), nullable=False)
     standard_id = Column(Integer, ForeignKey("standards.id"), nullable=False)
     clause_note = Column(Text)
-    
+
     test = relationship("Test", back_populates="standards")
     standard = relationship("Standard", back_populates="test_links")
 
@@ -142,14 +158,20 @@ class TestStandard(Base):
 class SafetyPrecaution(Base):
     __tablename__ = "safety_precautions"
     id = Column(Integer, primary_key=True, index=True)
-    scope = Column(SQLEnum('general', 'equipment', 'test'))
-    equipment_class_id = Column(Integer, ForeignKey("equipment_classes.id"), nullable=True)
+    scope = Column(
+        SQLEnum("general", "equipment", "test", name="safety_scope")
+    )
+    equipment_class_id = Column(
+        Integer, ForeignKey("equipment_classes.id"), nullable=True
+    )
     test_id = Column(Integer, ForeignKey("tests.id"), nullable=True)
     text = Column(Text, nullable=False)
     mandatory = Column(Boolean, default=True)
     source_id = Column(Integer, ForeignKey("sources.id"))
-    
-    equipment_class = relationship("EquipmentClass", back_populates="safety_precautions")
+
+    equipment_class = relationship(
+        "EquipmentClass", back_populates="safety_precautions"
+    )
     test = relationship("Test", back_populates="safety_precautions")
     source = relationship("Source")
 
@@ -162,7 +184,7 @@ class Troubleshooting(Base):
     probable_cause = Column(Text, nullable=False)
     recommended_action = Column(Text, nullable=False)
     source_id = Column(Integer, ForeignKey("sources.id"))
-    
+
     test = relationship("Test", back_populates="troubleshooting")
     source = relationship("Source")
 
@@ -183,9 +205,15 @@ class Synonym(Base):
     id = Column(Integer, primary_key=True, index=True)
     canonical = Column(String(200), nullable=False, index=True)
     variant = Column(String(200), nullable=False, index=True)
-    kind = Column(SQLEnum('test', 'equipment', 'parameter', 'abbreviation'))
-    
-    __table_args__ = (UniqueConstraint('canonical', 'variant', 'kind', name='uq_synonym'),)
+    kind = Column(
+        SQLEnum(
+            "test", "equipment", "parameter", "abbreviation", name="synonym_kind"
+        )
+    )
+
+    __table_args__ = (
+        UniqueConstraint("canonical", "variant", "kind", name="uq_synonym"),
+    )
 
 
 class Document(Base):
@@ -201,12 +229,16 @@ class Document(Base):
     uploaded_by = Column(Integer, ForeignKey("users.id"))
     page_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     equipment_class = relationship("EquipmentClass")
     standard = relationship("Standard")
     uploader = relationship("User")
-    chunks = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
-    sources = relationship("Source", back_populates="document_ref", cascade="all, delete-orphan")
+    chunks = relationship(
+        "Chunk", back_populates="document", cascade="all, delete-orphan"
+    )
+    sources = relationship(
+        "Source", back_populates="document_ref", cascade="all, delete-orphan"
+    )
 
 
 class Chunk(Base):
@@ -221,7 +253,7 @@ class Chunk(Base):
     test_id = Column(Integer, ForeignKey("tests.id"), nullable=True)
     chunk_index = Column(Integer)
     token_count = Column(Integer)
-    
+
     document = relationship("Document", back_populates="chunks")
     equipment_class = relationship("EquipmentClass")
     test = relationship("Test")
@@ -234,10 +266,14 @@ class Conversation(Base):
     title = Column(String(300))
     mode = Column(SQLEnum(ConversationMode), default=ConversationMode.QA)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     user = relationship("User", back_populates="conversations")
-    messages = relationship("Message", back_populates="conversation", order_by="Message.created_at",
-                            cascade="all, delete-orphan")
+    messages = relationship(
+        "Message",
+        back_populates="conversation",
+        order_by="Message.created_at",
+        cascade="all, delete-orphan",
+    )
 
 
 class Message(Base):
@@ -252,9 +288,11 @@ class Message(Base):
     confidence = Column(Float)
     latency_ms = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     conversation = relationship("Conversation", back_populates="messages")
-    feedback = relationship("Feedback", back_populates="message", cascade="all, delete-orphan")
+    feedback = relationship(
+        "Feedback", back_populates="message", cascade="all, delete-orphan"
+    )
 
 
 class Feedback(Base):
@@ -265,7 +303,7 @@ class Feedback(Base):
     rating = Column(Integer)  # 1 or -1
     comment = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     message = relationship("Message", back_populates="feedback")
     user = relationship("User", back_populates="feedback")
 
@@ -279,7 +317,7 @@ class ProcedureRun(Base):
     notes = Column(Text)
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
-    
+
     user = relationship("User", back_populates="procedure_runs")
     test = relationship("Test")
 
@@ -292,7 +330,7 @@ class QuizAttempt(Base):
     score = Column(Integer)
     total = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     user = relationship("User", back_populates="quiz_attempts")
 
 
@@ -305,4 +343,4 @@ class UnansweredQuery(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-Index('ix_chunks_embedding_id', 'chunks.id')  # placeholder for vector index reference
+Index("ix_chunks_embedding_id", "chunks.id")  # placeholder for vector index reference

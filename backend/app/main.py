@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.core.config import get_settings
 from app.db.session import engine, Base
-from app.db import models
 from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback
 
 settings = get_settings()
@@ -19,7 +18,7 @@ app = FastAPI(
     title="SubstationIQ API",
     description="Intelligent chatbot for substation asset maintenance",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 app.add_middleware(

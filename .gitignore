@@ -26,3 +26,6 @@ dist/
 # Test / build artifacts
 .coverage
 htmlcov/
+
+# Runtime logs
+*.log

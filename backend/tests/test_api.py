@@ -1,4 +1,5 @@
 """API tests using FastAPI TestClient with an isolated SQLite DB."""
+
 import os
 import sys
 import tempfile
@@ -28,10 +29,22 @@ def setup_db():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        db.add(User(name="Test User", email="u@test.dev",
-                    password_hash=get_password_hash("pass1234"), role=UserRole.USER))
-        db.add(User(name="Test Admin", email="a@test.dev",
-                    password_hash=get_password_hash("pass1234"), role=UserRole.ADMIN))
+        db.add(
+            User(
+                name="Test User",
+                email="u@test.dev",
+                password_hash=get_password_hash("pass1234"),
+                role=UserRole.USER,
+            )
+        )
+        db.add(
+            User(
+                name="Test Admin",
+                email="a@test.dev",
+                password_hash=get_password_hash("pass1234"),
+                role=UserRole.ADMIN,
+            )
+        )
         db.commit()
         load_catalog_to_db(db)
         register_sample_documents(db)
@@ -67,9 +80,14 @@ def test_health(client):
 
 
 def test_register_and_login(client):
-    r = client.post("/api/auth/register", json={"name": "X", "email": "x@test.dev", "password": "pass1234"})
+    r = client.post(
+        "/api/auth/register",
+        json={"name": "X", "email": "x@test.dev", "password": "pass1234"},
+    )
     assert r.status_code == 200
-    r = client.post("/api/auth/login", json={"email": "x@test.dev", "password": "pass1234"})
+    r = client.post(
+        "/api/auth/login", json={"email": "x@test.dev", "password": "pass1234"}
+    )
     assert r.status_code == 200 and "access_token" in r.json()
 
 
@@ -89,21 +107,33 @@ def test_equipment(client, user_headers):
 
 
 def test_tests_for_equipment(client, user_headers):
-    r = client.get("/api/catalog/tests", params={"equipment": "Circuit Breaker"}, headers=user_headers)
+    r = client.get(
+        "/api/catalog/tests",
+        params={"equipment": "Circuit Breaker"},
+        headers=user_headers,
+    )
     assert r.status_code == 200 and len(r.json()) >= 3
 
 
 def test_test_detail(client, user_headers):
-    tests = client.get("/api/catalog/tests", params={"equipment": "Power Transformer"},
-                       headers=user_headers).json()
+    tests = client.get(
+        "/api/catalog/tests",
+        params={"equipment": "Power Transformer"},
+        headers=user_headers,
+    ).json()
     test_id = next(t["id"] for t in tests if "Insulation Resistance" in t["name"])
     d = client.get(f"/api/catalog/tests/{test_id}", headers=user_headers).json()
     assert d["steps"] and d["limits"] and d["standards"] and d["safety"]
 
 
 def test_chat_procedure(client, user_headers):
-    r = client.post("/api/chat", headers=user_headers,
-                    json={"message": "How do I perform an insulation resistance test on a power transformer?"})
+    r = client.post(
+        "/api/chat",
+        headers=user_headers,
+        json={
+            "message": "How do I perform an insulation resistance test on a power transformer?"
+        },
+    )
     assert r.status_code == 200
     d = r.json()
     assert d["intent"] == "procedure"
@@ -113,57 +143,119 @@ def test_chat_procedure(client, user_headers):
 
 
 def test_chat_limits(client, user_headers):
-    r = client.post("/api/chat", headers=user_headers,
-                    json={"message": "What is the acceptable contact resistance for a circuit breaker?"})
+    r = client.post(
+        "/api/chat",
+        headers=user_headers,
+        json={
+            "message": "What is the acceptable contact resistance for a circuit breaker?"
+        },
+    )
     d = r.json()
     assert d["intent"] == "limits"
     assert "100" in d["answer"]  # catalog limit value present
 
 
 def test_chat_out_of_scope(client, user_headers):
-    d = client.post("/api/chat", headers=user_headers, json={"message": "Who won the football match?"}).json()
+    d = client.post(
+        "/api/chat",
+        headers=user_headers,
+        json={"message": "Who won the football match?"},
+    ).json()
     assert d["source_type"] == "out_of_scope"
 
 
 def test_chat_bypass_refused(client, user_headers):
-    d = client.post("/api/chat", headers=user_headers,
-                    json={"message": "How can I bypass the interlock on the breaker?"}).json()
+    d = client.post(
+        "/api/chat",
+        headers=user_headers,
+        json={"message": "How can I bypass the interlock on the breaker?"},
+    ).json()
     assert d["source_type"] == "guardrail"
     assert "can't help" in d["answer"].lower()
 
 
 def test_diagnosis(client, user_headers):
-    r = client.post("/api/diagnosis", headers=user_headers,
-                    json={"equipment_class_id": 1, "symptoms": "moisture high dew point"})
+    r = client.post(
+        "/api/diagnosis",
+        headers=user_headers,
+        json={"equipment_class_id": 1, "symptoms": "moisture high dew point"},
+    )
     assert r.status_code == 200 and r.json()["causes"]
 
 
 def test_check_result_borderline_and_outside(client, user_headers):
-    tests = client.get("/api/catalog/tests", params={"equipment": "Circuit Breaker"},
-                       headers=user_headers).json()
+    tests = client.get(
+        "/api/catalog/tests",
+        params={"equipment": "Circuit Breaker"},
+        headers=user_headers,
+    ).json()
     test_id = next(t["id"] for t in tests if "Contact Resistance" in t["name"])
-    r = client.post("/api/check-result", headers=user_headers,
-                    json={"test_id": test_id, "parameter": "Contact resistance per pole",
-                          "measured_value": 250.0, "unit": "µΩ"})
+    r = client.post(
+        "/api/check-result",
+        headers=user_headers,
+        json={
+            "test_id": test_id,
+            "parameter": "Contact resistance per pole",
+            "measured_value": 250.0,
+            "unit": "µΩ",
+        },
+    )
     assert r.status_code == 200
     assert r.json()["status"] in ("outside limits", "borderline")
 
 
+def test_check_result_qualitative_limit(client, user_headers):
+    """Limits with no numeric bounds return the criterion, not a comparison."""
+    tests = client.get(
+        "/api/catalog/tests",
+        params={"equipment": "Power Transformer"},
+        headers=user_headers,
+    ).json()
+    test_id = next(t["id"] for t in tests if "SFRA" in t["name"])
+    r = client.post(
+        "/api/check-result",
+        headers=user_headers,
+        json={
+            "test_id": test_id,
+            "parameter": "Trace deviation",
+            "measured_value": 1.0,
+            "unit": "dB",
+        },
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "see criterion"
+    assert "deviation" in d["limit_value"].lower()
+    assert d["troubleshooting"] == []
+
+
 def test_procedure_run_lifecycle(client, user_headers):
-    tests = client.get("/api/catalog/tests", params={"equipment": "Power Transformer"},
-                       headers=user_headers).json()
+    tests = client.get(
+        "/api/catalog/tests",
+        params={"equipment": "Power Transformer"},
+        headers=user_headers,
+    ).json()
     test_id = tests[0]["id"]
-    run = client.post("/api/procedures/start", headers=user_headers, json={"test_id": test_id}).json()
+    run = client.post(
+        "/api/procedures/start", headers=user_headers, json={"test_id": test_id}
+    ).json()
     assert run["steps_state"]
 
     # Sequential completion required
     keys = sorted(run["steps_state"].keys(), key=int)
     for k in keys:
-        r = client.put(f"/api/procedures/{run['id']}/step", headers=user_headers,
-                       json={"step_no": int(k), "done": True})
+        r = client.put(
+            f"/api/procedures/{run['id']}/step",
+            headers=user_headers,
+            json={"step_no": int(k), "done": True},
+        )
         assert r.status_code == 200
 
-    r = client.post(f"/api/procedures/{run['id']}/complete", headers=user_headers, json={"notes": "ok"})
+    r = client.post(
+        f"/api/procedures/{run['id']}/complete",
+        headers=user_headers,
+        json={"notes": "ok"},
+    )
     assert r.status_code == 200 and r.json()["completed_at"]
 
     # PDF export
@@ -172,28 +264,43 @@ def test_procedure_run_lifecycle(client, user_headers):
 
 
 def test_quiz_flow(client, user_headers):
-    q = client.post("/api/learn/quiz", headers=user_headers,
-                    json={"topic": "all", "count": 3}).json()["questions"]
+    q = client.post(
+        "/api/learn/quiz", headers=user_headers, json={"topic": "all", "count": 3}
+    ).json()["questions"]
     assert len(q) >= 1
-    r = client.post("/api/learn/quiz/submit", headers=user_headers,
-                    json={"topic": "all", "question_ids": [x["id"] for x in q],
-                          "answers": [x["correct_index"] for x in q]})
+    r = client.post(
+        "/api/learn/quiz/submit",
+        headers=user_headers,
+        json={
+            "topic": "all",
+            "question_ids": [x["id"] for x in q],
+            "answers": [x["correct_index"] for x in q],
+        },
+    )
     assert r.json()["score"] == r.json()["total"]
 
 
 def test_admin_documents_and_analytics(client, admin_headers):
     r = client.get("/api/admin/documents", headers=admin_headers)
-    assert r.status_code == 200 and any(d["filename"].endswith(".txt") for d in r.json())
+    assert r.status_code == 200 and any(
+        d["filename"].endswith(".txt") for d in r.json()
+    )
     r = client.get("/api/admin/analytics", headers=admin_headers)
     assert r.status_code == 200 and "total_queries" in r.json()
 
 
 def test_conversation_history(client, user_headers):
-    created = client.post("/api/chat", headers=user_headers,
-                          json={"message": "SFRA test on transformer"}).json()
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "SFRA test on transformer"}
+    ).json()
     cid = created["conversation_id"]
     lst = client.get("/api/chat/conversations", headers=user_headers).json()
     assert any(c["id"] == cid for c in lst)
     detail = client.get(f"/api/chat/conversations/{cid}", headers=user_headers).json()
     assert len(detail["messages"]) == 2
-    assert client.delete(f"/api/chat/conversations/{cid}", headers=user_headers).status_code == 200
+    assert (
+        client.delete(
+            f"/api/chat/conversations/{cid}", headers=user_headers
+        ).status_code
+        == 200
+    )

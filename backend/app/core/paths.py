@@ -1,4 +1,5 @@
 """Central path resolution so the app works on the host repo layout and inside Docker."""
+
 from pathlib import Path
 
 
@@ -23,22 +24,28 @@ def _repo_root() -> Path:
 REPO_ROOT = _repo_root()
 
 # data/catalog: repo layout first, then Docker /app/data layout
-CATALOG_DIR = _find_dir([
-    REPO_ROOT / "data" / "catalog",
-    Path("/app/data/catalog"),
-    Path("data/catalog").resolve(),
-])
+CATALOG_DIR = _find_dir(
+    [
+        REPO_ROOT / "data" / "catalog",
+        Path("/app/data/catalog"),
+        Path("data/catalog").resolve(),
+    ]
+)
 
 # data/raw_docs
-RAW_DOCS_DIR = _find_dir([
-    REPO_ROOT / "data" / "raw_docs",
-    Path("/app/data/raw_docs"),
-    Path("data/raw_docs").resolve(),
-])
+RAW_DOCS_DIR = _find_dir(
+    [
+        REPO_ROOT / "data" / "raw_docs",
+        Path("/app/data/raw_docs"),
+        Path("data/raw_docs").resolve(),
+    ]
+)
 
 # data root (chroma lives under data/chroma)
-DATA_DIR = _find_dir([
-    REPO_ROOT / "data",
-    Path("/app/data"),
-    Path("data").resolve(),
-])
+DATA_DIR = _find_dir(
+    [
+        REPO_ROOT / "data",
+        Path("/app/data"),
+        Path("data").resolve(),
+    ]
+)

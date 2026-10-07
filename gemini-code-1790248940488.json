@@ -1,0 +1,11 @@
+{
+  "doc_id": "MAN_CB_2023_V1",
+  "doc_name": "Circuit_Breaker_Maintenance_Manual.pdf",
+  "equipment_class": "Circuit_Breaker",
+  "test_type": "Contact_Resistance",
+  "voltage_rating": "132kV-400kV",
+  "standard_reference": "IEC 62271-100 / IEEE C37.09",
+  "version": "2023.1",
+  "section_title": "4.2 Contact Resistance Measurement Procedure",
+  "page_number": 42
+}

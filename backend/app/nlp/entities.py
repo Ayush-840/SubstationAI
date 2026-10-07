@@ -1,8 +1,12 @@
 """Entity recognition with a graceful fallback when spaCy is unavailable."""
+
+import re
 from typing import Dict, List, Tuple
+
 try:
     import spacy
     from spacy.matcher import PhraseMatcher
+
     _SPACY_OK = True
 except Exception:  # pragma: no cover - heavy optional dependency
     spacy = None
@@ -19,31 +23,82 @@ FALLBACK_GAZETTEER: Dict[str, List[Tuple[str, List[str]]]] = {
     "equipment": [
         ("Power Transformer", ["transformer", "power trafo", "xfmr"]),
         ("Circuit Breaker", ["breaker", "cb", "vacuum breaker", "sf6 breaker"]),
-        ("Reactor", ["shunt reactor", "series reactor"]),
-        ("Instrument Transformer", ["ct", "pt", "cvt", "ct/pt", "current transformer",
-                                    "potential transformer", "capacitive voltage transformer"]),
+        (
+            "Reactor",
+            [
+                "shunt reactor",
+                "series reactor",
+                "reactor",
+                "air-core reactor",
+                "air core reactor",
+            ],
+        ),
+        (
+            "Instrument Transformer",
+            [
+                "ct",
+                "pt",
+                "cvt",
+                "ct/pt",
+                "current transformer",
+                "potential transformer",
+                "capacitive voltage transformer",
+            ],
+        ),
         ("Surge Arrester", ["arrester", "arrestor", "lightning arrester", "la"]),
     ],
     "test": [
-        ("Insulation Resistance (IR) and Polarisation Index (PI)",
-         ["insulation resistance", "ir test", "megger test", "pi test", "polarisation index"]),
+        (
+            "Insulation Resistance (IR) and Polarisation Index (PI)",
+            [
+                "insulation resistance",
+                "ir test",
+                "megger test",
+                "pi test",
+                "polarisation index",
+            ],
+        ),
         ("Winding Resistance", ["winding resistance test", "dc resistance"]),
-        ("Dissolved Gas Analysis (DGA)", ["dga", "dissolved gas analysis", "oil gas analysis"]),
-        ("Oil Breakdown Voltage (BDV) and Moisture", ["bdv test", "breakdown voltage", "oil bdv"]),
+        (
+            "Dissolved Gas Analysis (DGA)",
+            ["dga", "dissolved gas analysis", "oil gas analysis"],
+        ),
+        (
+            "Oil Breakdown Voltage (BDV) and Moisture",
+            ["bdv test", "breakdown voltage", "oil bdv"],
+        ),
         ("Sweep Frequency Response Analysis (SFRA)", ["sfra", "frequency response"]),
-        ("Contact Resistance (DLRO)", ["contact resistance", "dcrm", "dlro", "micro-ohm test"]),
-        ("Timing Test (Contact Travel)", ["breaker timing", "timing test", "travel test"]),
+        (
+            "Contact Resistance (DLRO)",
+            ["contact resistance", "dcrm", "dlro", "micro-ohm test"],
+        ),
+        (
+            "Timing Test (Contact Travel)",
+            ["breaker timing", "timing test", "travel test"],
+        ),
         ("SF6 Gas Quality and Moisture", ["sf6 test", "sf6 moisture", "dew point"]),
         ("Ratio and Polarity Test", ["ratio test", "polarity test", "ct ratio"]),
-        ("Tan Delta and Capacitance (Bushing/Insulation)", ["tan delta", "power factor test"]),
+        (
+            "Tan Delta and Capacitance (Bushing/Insulation)",
+            ["tan delta", "power factor test"],
+        ),
         ("Knee-Point Voltage (Protection CT)", ["knee point", "excitation curve"]),
         ("Leakage Current Measurement (Total and Resistive)", ["leakage current"]),
         ("Thermography (Arrester)", ["thermography", "thermal imaging"]),
     ],
     "parameter": [
-        ("IR", []), ("PI", []), ("tan delta", []), ("capacitance", []), ("resistance", []),
-        ("moisture", []), ("hydrogen", []), ("acetylene", []), ("leakage current", []),
-        ("knee-point voltage", []), ("contact resistance", []), ("ratio error", []),
+        ("IR", []),
+        ("PI", []),
+        ("tan delta", []),
+        ("capacitance", []),
+        ("resistance", []),
+        ("moisture", []),
+        ("hydrogen", []),
+        ("acetylene", []),
+        ("leakage current", []),
+        ("knee-point voltage", []),
+        ("contact resistance", []),
+        ("ratio error", []),
     ],
 }
 
@@ -128,21 +183,39 @@ class EntityRecognizer:
                     found[category].append(canonical)
 
         # Fuzzy fallback (applied when a category is still empty).
-        # Match against canonical names AND aliases, then canonicalise the winner.
+        # Short aliases (CT, PT, CB, IR…) must match as whole tokens only —
+        # WRatio partial matching otherwise hits them inside words like "contact".
         for category in ("equipment", "test"):
             if found[category]:
                 continue
+            for term in self._gazetteer[category]:
+                if len(term) <= 3:
+                    if re.search(rf"\b{re.escape(term.lower())}\b", normalized):
+                        canonical = self._canonical_map.get(term.lower(), term)
+                        if canonical not in found[category]:
+                            found[category].append(canonical)
+            if found[category]:
+                continue
             match = process.extractOne(
-                normalized, self._gazetteer[category],
-                scorer=fuzz.WRatio, score_cutoff=55,
+                normalized,
+                self._gazetteer[category],
+                scorer=fuzz.WRatio,
+                score_cutoff=72,
             )
             if match:
                 canonical = self._canonical_map.get(match[0].lower(), match[0])
                 if canonical not in found[category]:
                     found[category].append(canonical)
 
+        # Short parameter terms also need word-boundary matching so "ir"
+        # does not hit inside "circuit".
         for term in self._gazetteer["parameter"]:
-            if term.lower() in normalized and term not in found["parameter"]:
+            pattern = (
+                rf"\b{re.escape(term.lower())}\b"
+                if len(term) <= 4
+                else re.escape(term.lower())
+            )
+            if re.search(pattern, normalized) and term not in found["parameter"]:
                 found["parameter"].append(term)
 
         return found

@@ -157,10 +157,11 @@ function ResultChecker() {
           <span className={`pill ${
             result.status === 'within limits' ? 'bg-success/15 text-success'
             : result.status === 'borderline' ? 'bg-warning/15 text-warning'
+            : result.status === 'see criterion' ? 'bg-primary/10 text-primary'
             : 'bg-danger/15 text-danger'}`}>
             {result.status}
           </span>
-          <p className="text-sm">Limit: <span className="font-mono">{result.limit_value}</span></p>
+          <p className="text-sm">{result.status === 'see criterion' ? 'Criterion:' : 'Limit:'} <span className="font-mono">{result.limit_value}</span></p>
           <p className="text-xs text-muted">{result.source}</p>
           {result.troubleshooting.length > 0 && (
             <div className="border-t border-brdr pt-2">

@@ -40,5 +40,7 @@ def normalize_query(text: str) -> str:
 def fuzzy_match(query: str, choices: list[str], threshold: int = 80) -> str | None:
     if not choices:
         return None
-    match = process.extractOne(query, choices, scorer=fuzz.WRatio, score_cutoff=threshold)
+    match = process.extractOne(
+        query, choices, scorer=fuzz.WRatio, score_cutoff=threshold
+    )
     return match[0] if match else None

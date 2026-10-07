@@ -201,9 +201,14 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp ../.env.example ../.env
 alembic upgrade head
-python -m app.scripts.seed         # demo users, sample docs, test catalog
+python -m app.scripts.seed         # demo users, sample docs, test catalog (idempotent)
 uvicorn app.main:app --reload --port 8000
 ```
+
+> **Existing database?** If your database already has tables from before Alembic was
+> introduced (created by `seed` alone), run `alembic stamp head` once instead of
+> `alembic upgrade head`, otherwise the initial migration fails on
+> "table already exists". Fresh databases should use `alembic upgrade head`.
 
 **Frontend**
 ```bash
@@ -299,6 +304,36 @@ Per-intent results: procedure 6/6 · limits 6/6 · troubleshooting 5/5 · test_e
 Hybrid gives the best recall: vector retrieval misses queries whose wording drifts from the indexed text, BM25 catches exact domain terms, and RRF fusion takes the union. Vector-only ranks its hits most confidently (highest MRR) but misses the most; BM25 is the fastest and more robust than vector on this small corpus. The shipped configuration uses hybrid + cross-encoder rerank.
 
 The backend test suite (34 tests) additionally covers the NLP layer (intent, synonyms, abbreviations, fuzzy matching, citation and number verification, guardrails) and the API (auth, chat, catalog, procedures, diagnosis, admin).
+
+## Authentication and session storage
+
+Chosen strategy — **TRD Option A (cookie + double-submit CSRF)**, selected deliberately
+because the frontend (Vercel) and backend (Render/Railway/Fly) are served from
+different origins in deployment:
+
+- **Access token:** short-lived JWT kept in memory on the client and sent as
+  `Authorization: Bearer …`.
+- **Refresh token:** opaque, random, stored **only** in an `HttpOnly`, `Secure`,
+  `SameSite=None` cookie scoped to `/api/auth/refresh`. `SameSite=None` is required:
+  a `Lax` cookie is not attached to cross-site `fetch`/XHR, so it works on
+  `localhost` but silently stops arriving at `/auth/refresh` once the frontend and
+  backend live on different domains.
+- **CSRF defence:** a second, non-HttpOnly cookie whose value the client echoes in
+  an `X-CSRF-Token` header on `refresh`/`logout`; the server compares the two
+  (double-submit). This is what makes `SameSite=None` safe.
+- **Rotation:** every refresh revokes the old token; logout revokes the refresh
+  cookie and deny-lists the access-token `jti` until expiry.
+
+Tradeoff acknowledged: `SameSite=None` means the refresh cookie travels with
+cross-site requests, which is why the CSRF header check is mandatory rather than
+optional. The alternatives considered were Option B (keep the refresh token in
+localStorage — simpler but a wider XSS exposure) and Option C (reverse-proxy the
+API under the frontend domain so `SameSite=Lax` works). If deployment ever moves
+to a single-origin reverse proxy, Option C is the cleaner fallback.
+
+Until the refresh endpoints ship, the access token is persisted in `localStorage`
+by `frontend/src/api/client.ts` — a known capstone tradeoff, replaced by the
+in-memory + cookie flow above when `/auth/refresh` is implemented.
 
 ## API Overview
 

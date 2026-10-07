@@ -21,12 +21,18 @@ MODE_MAP = {
 }
 
 
-def _get_or_create_conversation(db: Session, request: ChatRequest, user_id: int) -> Conversation:
+def _get_or_create_conversation(
+    db: Session, request: ChatRequest, user_id: int
+) -> Conversation:
     if request.conversation_id:
-        conversation = db.query(Conversation).filter(
-            Conversation.id == request.conversation_id,
-            Conversation.user_id == user_id,
-        ).first()
+        conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.id == request.conversation_id,
+                Conversation.user_id == user_id,
+            )
+            .first()
+        )
         if not conversation:
             raise HTTPException(404, "Conversation not found")
         return conversation
@@ -43,14 +49,25 @@ def _get_or_create_conversation(db: Session, request: ChatRequest, user_id: int)
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     conversation = _get_or_create_conversation(db, request, current_user.id)
 
-    user_msg = Message(conversation_id=conversation.id, role="user", content=request.message)
+    user_msg = Message(
+        conversation_id=conversation.id, role="user", content=request.message
+    )
     db.add(user_msg)
     db.commit()
 
-    history = db.query(Message).filter(Message.conversation_id == conversation.id).order_by(Message.created_at).all()
+    history = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation.id)
+        .order_by(Message.created_at)
+        .all()
+    )
     history_text = [f"{m.role}: {m.content}" for m in history[-8:]]
 
     understanding = intent_classifier.classify(request.message, history_text)
@@ -74,7 +91,10 @@ async def chat_stream(request: ChatRequest, current_user: User = Depends(get_cur
                     role="assistant",
                     content=final.get("answer", ""),
                     intent=final.get("intent"),
-                    entities_json={"equipment": final.get("equipment"), "test": final.get("test")},
+                    entities_json={
+                        "equipment": final.get("equipment"),
+                        "test": final.get("test"),
+                    },
                     citations_json=final.get("citations", []),
                     confidence=final.get("confidence"),
                     latency_ms=latency_ms,
@@ -92,14 +112,25 @@ async def chat_stream(request: ChatRequest, current_user: User = Depends(get_cur
 
 
 @router.post("", response_model=ChatResponse)
-def chat(request: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def chat(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     conversation = _get_or_create_conversation(db, request, current_user.id)
 
-    user_msg = Message(conversation_id=conversation.id, role="user", content=request.message)
+    user_msg = Message(
+        conversation_id=conversation.id, role="user", content=request.message
+    )
     db.add(user_msg)
     db.commit()
 
-    history = db.query(Message).filter(Message.conversation_id == conversation.id).order_by(Message.created_at).all()
+    history = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation.id)
+        .order_by(Message.created_at)
+        .all()
+    )
     history_text = [f"{m.role}: {m.content}" for m in history[-8:]]
 
     understanding = intent_classifier.classify(request.message, history_text)
@@ -116,7 +147,10 @@ def chat(request: ChatRequest, current_user: User = Depends(get_current_user), d
         role="assistant",
         content=result["answer"],
         intent=result["intent"],
-        entities_json={"equipment": result.get("equipment"), "test": result.get("test")},
+        entities_json={
+            "equipment": result.get("equipment"),
+            "test": result.get("test"),
+        },
         citations_json=result["citations"],
         confidence=result["confidence"],
         latency_ms=latency_ms,
@@ -133,10 +167,15 @@ def chat(request: ChatRequest, current_user: User = Depends(get_current_user), d
 
 
 @router.get("/conversations")
-def get_conversations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    conversations = db.query(Conversation).filter(
-        Conversation.user_id == current_user.id
-    ).order_by(Conversation.created_at.desc()).all()
+def get_conversations(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    conversations = (
+        db.query(Conversation)
+        .filter(Conversation.user_id == current_user.id)
+        .order_by(Conversation.created_at.desc())
+        .all()
+    )
 
     return [
         {
@@ -151,15 +190,28 @@ def get_conversations(current_user: User = Depends(get_current_user), db: Sessio
 
 
 @router.get("/conversations/{conversation_id}")
-def get_conversation(conversation_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id,
-    ).first()
+def get_conversation(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
     if not conversation:
         raise HTTPException(404, "Conversation not found")
 
-    messages = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.created_at).all()
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at)
+        .all()
+    )
 
     return {
         "id": conversation.id,
@@ -182,11 +234,19 @@ def get_conversation(conversation_id: int, current_user: User = Depends(get_curr
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id,
-    ).first()
+def delete_conversation(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
     if not conversation:
         raise HTTPException(404, "Conversation not found")
 

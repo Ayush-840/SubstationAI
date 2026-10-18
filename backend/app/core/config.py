@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./app.db"
 
+    # MongoDB
+    MONGO_URL: str = "mongodb://mongo:27017"
+    MONGO_DB: str = "substationiq"
+
     # JWT
     JWT_SECRET: str = "change-me"
     JWT_ALGORITHM: str = "HS256"

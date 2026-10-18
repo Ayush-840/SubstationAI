@@ -9,8 +9,9 @@ import Diagnosis from './pages/Diagnosis'
 import History from './pages/History'
 import Admin from './pages/Admin'
 import Learn from './pages/Learn'
+import ResultChecker from './pages/ResultChecker'
 
-type Tab = 'chat' | 'procedures' | 'diagnosis' | 'learn' | 'history' | 'admin'
+type Tab = 'chat' | 'procedures' | 'diagnosis' | 'learn' | 'history' | 'admin' | 'result-checker'
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'chat', label: 'Chat', icon: '💬' },
@@ -18,6 +19,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'diagnosis', label: 'Diagnose', icon: '🩺' },
   { id: 'learn', label: 'Learn', icon: '🎓' },
   { id: 'history', label: 'History', icon: '🕘' },
+  { id: 'result-checker', label: 'Result Checker', icon: '✅' },
 ]
 
 export default function App() {
@@ -70,6 +72,7 @@ export default function App() {
         {tab === 'diagnosis' && <Diagnosis />}
         {tab === 'learn' && <Learn />}
         {tab === 'history' && <History />}
+        {tab === 'result-checker' && <ResultChecker />}
         {tab === 'admin' && <Admin />}
       </main>
 

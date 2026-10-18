@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import desc, asc
 from sqlalchemy.orm import Session
 from typing import List
 from app.db.session import get_db
@@ -6,6 +7,7 @@ from app.db.models import Test, User
 from app.core.security import get_current_user
 from app.schemas import EquipmentClassResponse, TestResponse, TestDetailResponse
 from app.catalog.lookup import CatalogLookup
+from app.api.deps import ListingParams
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 
@@ -21,21 +23,40 @@ def get_equipment_classes(
 
 @router.get("/tests", response_model=List[TestResponse])
 def get_tests(
-    equipment: str = None,
+    listing: ListingParams = Depends(),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     catalog = CatalogLookup(db)
 
-    if equipment:
-        equip = catalog.find_equipment(equipment)
+    if listing.equipment:
+        equip = catalog.find_equipment(listing.equipment)
         if not equip:
             raise HTTPException(404, "Equipment class not found")
-        tests = catalog.get_tests_for_equipment(equip.id)
+        query = db.query(Test).filter(Test.equipment_class_id == equip.id)
     else:
-        tests = db.query(Test).all()
+        query = db.query(Test)
 
-    return tests
+    # Apply sorting (shared pagination/filtering/sorting dependency — Day 2 B).
+    sort_col: str = "id"
+    sort_desc: bool = False
+    if listing.sort:
+        if listing.sort.startswith("-"):
+            sort_col = listing.sort[1:]
+            sort_desc = True
+        else:
+            sort_col = listing.sort
+    col = getattr(Test, sort_col, None)
+    if col is None:
+        col = Test.id
+        sort_desc = False
+    ordered = query.order_by(desc(col) if sort_desc else asc(col))
+
+    # Apply pagination (shared dependency — Day 2 B).
+    total = ordered.count()
+    rows = ordered.offset(listing.offset).limit(listing.limit).all()
+
+    return rows
 
 
 @router.get("/tests/{test_id}", response_model=TestDetailResponse)

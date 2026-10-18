@@ -41,26 +41,26 @@ export interface ChatResult {
 }
 
 export interface ConversationSummary {
-  id: number
-  title: string
+  id: string
+  title?: string
   mode: string
-  created_at: string
+  created_at?: string | Date
   message_count: number
 }
 
 export interface ConversationDetail {
-  id: number
-  title: string
+  id: string
+  title?: string
   mode: string
-  created_at: string
+  created_at?: string | Date
   messages: {
-    id: number
+    id: string
     role: 'user' | 'assistant'
     content: string
     intent: string | null
     citations: Citation[] | null
     confidence: number | null
-    created_at: string
+    created_at?: string | Date
   }[]
 }
 

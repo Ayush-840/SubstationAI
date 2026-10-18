@@ -15,8 +15,13 @@ export default function History() {
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<ConversationDetail | null>(null)
 
-  const load = () => {
-    api.get<ConversationSummary[]>('/api/chat/conversations').then(setConversations).catch(() => {})
+  const load = async () => {
+    try {
+      const res = await api.get<ConversationSummary[]>('/api/chat/conversations')
+      setConversations(res)
+    } catch {
+      // keep existing list on transient failure
+    }
   }
   useEffect(load, [])
 
@@ -24,7 +29,7 @@ export default function History() {
     c.title?.toLowerCase().includes(search.toLowerCase()),
   )
 
-  const remove = async (id: number) => {
+  const remove = async (id: string) => {
     if (!confirm('Delete this conversation?')) return
     await api.del(`/api/chat/conversations/${id}`)
     setOpen(null)

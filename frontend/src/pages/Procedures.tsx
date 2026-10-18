@@ -33,8 +33,9 @@ export default function Procedures() {
     if (!equipId) { setTests([]); return }
     const eq = equipment.find((e) => e.id === equipId)
     if (!eq) return
-    api.get<TestSummary[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}`)
-      .then(setTests).catch(() => {})
+    api.get<TestSummary[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+      .then((res) => setTests(Array.isArray(res) ? res : res.data ?? res))
+      .catch(() => {})
   }, [equipId])
   useEffect(() => { setTests([]); }, [equipment])
 

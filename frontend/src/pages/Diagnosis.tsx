@@ -137,44 +137,47 @@ function ResultChecker() {
     }
   }
 
-  return (
-    <form onSubmit={submit} className="card space-y-3">
-      <h2 className="font-semibold">Compare a measured value with catalog limits</h2>
-      <select className="input" value={testId ?? ''} onChange={(e) => setTestId(Number(e.target.value) || null)} required>
-        <option value="">Select test…</option>
-        {tests.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-      </select>
-      <input className="input" placeholder="Parameter (e.g. Contact resistance per pole)"
-             value={parameter} onChange={(e) => setParameter(e.target.value)} required />
-      <input className="input" type="number" step="any" placeholder="Measured value"
-             value={value} onChange={(e) => setValue(e.target.value)} required />
-      <button className="btn-primary">Check result</button>
+  return (      <form onSubmit={submit} className="card space-y-3">
+        <h2 className="font-semibold">Compare a measured value with catalog limits</h2>
+        <select className="input" value={testId ?? ''} onChange={(e) => setTestId(Number(e.target.value) || null)} required>
+          <option value="">Select test…</option>
+          {tests.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <input className="input" placeholder="Parameter (e.g. Contact resistance per pole)"
+               value={parameter} onChange={(e) => setParameter(e.target.value)} required />
+        <input className="input" type="number" step="any" placeholder="Measured value"
+               value={value} onChange={(e) => setValue(e.target.value)} required />
+        <button className="btn-primary">Check result</button>
 
-      {error && <p className="text-sm text-danger" role="alert">{error}</p>}
+        {error && <p className="text-sm text-danger" role="alert">{error}</p>}
 
-      {result && (
-        <div className="card space-y-2">
-          <span className={`pill ${
-            result.status === 'within limits' ? 'bg-success/15 text-success'
-            : result.status === 'borderline' ? 'bg-warning/15 text-warning'
-            : result.status === 'see criterion' ? 'bg-primary/10 text-primary'
-            : 'bg-danger/15 text-danger'}`}>
-            {result.status}
-          </span>
-          <p className="text-sm">{result.status === 'see criterion' ? 'Criterion:' : 'Limit:'} <span className="font-mono">{result.limit_value}</span></p>
-          <p className="text-xs text-muted">{result.source}</p>
-          {result.troubleshooting.length > 0 && (
-            <div className="border-t border-brdr pt-2">
-              <p className="text-xs font-medium text-muted">Outside limits — probable causes</p>
-              <ul className="list-inside list-disc text-sm">
-                {result.troubleshooting.map((t, i) => (
-                  <li key={i}>{t.cause} → {t.action}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-    </form>
+        {result && (
+          <div className="card space-y-2 animate-fade-up">
+            <span className={`pill ${
+              result.status === 'within limits' ? 'bg-success/15 text-success'
+              : result.status === 'borderline' ? 'bg-warning/15 text-warning'
+              : result.status === 'see criterion' ? 'bg-primary/10 text-primary'
+              : 'bg-danger/15 text-danger'}`}>
+              {result.status}
+            </span>
+            <p className="text-sm">
+              {result.status === 'see criterion' ? 'Criterion:' : 'Limit:'}
+              {' '}<span className="font-mono">{result.limit_value}</span>
+            </p>
+            <p className="text-xs text-muted">{result.source}</p>
+            {result.troubleshooting.length > 0 && (
+              <div className="border-t border-brdr pt-2">
+                <p className="text-xs font-medium text-muted">Outside limits — probable causes</p>
+                <ul className="list-inside list-disc text-sm">
+                  {result.troubleshooting.map((t, i) => (
+                    <li key={i}>{t.cause} → {t.action}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </form>
+
   )
 }

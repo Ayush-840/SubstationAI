@@ -144,7 +144,7 @@ export default function Chat() {
         <div className="mx-auto max-w-3xl space-y-4">
           {messages.map((m, i) =>
             m.role === 'user' ? (
-              <div key={i} className="flex justify-end">
+              <div key={i} className="animate-fade-up flex justify-end">
                 <div className="max-w-[80%] rounded-card bg-primary/10 px-4 py-2.5 text-sm">{m.content}</div>
               </div>
             ) : (
@@ -211,8 +211,14 @@ function AssistantMessage({ msg, streaming, statusLine, feedback, onFeedback }: 
       {isGuardrail && <DangerBanner message={msg.content} />}
       {isNotFound && <DangerBanner message={msg.content} />}
 
+      {result && result.source_type === 'out_of_scope' && !isGuardrail && (
+        <div className="rounded-card border border-muted bg-muted/10 px-4 py-3 text-sm text-muted">
+          {msg.content}
+        </div>
+      )}
+
       {!isGuardrail && !isNotFound && (
-        <div className={`whitespace-pre-wrap text-sm ${streaming && !msg.content ? 'stream-caret' : ''}`}>
+        <div className={`animate-fade-up whitespace-pre-wrap text-sm leading-relaxed ${streaming && !msg.content ? 'stream-caret' : ''}`}>
           {msg.content || (streaming ? '' : '…')}
         </div>
       )}

@@ -104,7 +104,7 @@ function Documents() {
               <th className="p-3">Pages</th>
               <th className="p-3">Status</th>
               <th className="p-3">Uploaded</th>
-              <th className="p-3" />
+              <th className="p-3"></th>
             </tr>
           </thead>
           <tbody>

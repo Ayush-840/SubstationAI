@@ -59,13 +59,12 @@ export default function Login() {
           </button>
         </p>
 
-        <div className="border-t border-brdr pt-3 text-xs text-muted space-y-1">
-          <p className="font-medium text-txt">Demo credentials</p>
-          <button type="button" className="underline hover:text-primary" onClick={() => fillDemo('user')}>
+        <div className="border-t border-brdr pt-3 text-xs text-muted space-y-2">
+          <p className="font-medium text-txt mb-1">Demo credentials</p>
+          <button type="button" className="w-full text-left underline hover:text-primary" onClick={() => fillDemo('user')}>
             demo@substationiq.dev / demo1234 (User)
           </button>
-          <br />
-          <button type="button" className="underline hover:text-primary" onClick={() => fillDemo('admin')}>
+          <button type="button" className="w-full text-left underline hover:text-primary" onClick={() => fillDemo('admin')}>
             admin@substationiq.dev / admin1234 (Admin)
           </button>
         </div>

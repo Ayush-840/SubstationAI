@@ -27,7 +27,9 @@ export default function App() {
 
   if (!user) return <Login />
 
-  const tabs: Tab[] = user.role === 'admin' ? [...TABS.map((t) => t.id), 'admin'] : TABS.map((t) => t.id)
+  const tabs: Tab[] = user.role === 'admin'
+    ? [...TABS.map((t) => t.id), 'admin']
+    : TABS.map((t) => t.id)
   const labels: Record<Tab, string> = Object.fromEntries(
     [...TABS, { id: 'admin' as Tab, label: 'Admin', icon: '⚙️' }].map((t) => [t.id, t.label]),
   ) as any
@@ -39,10 +41,12 @@ export default function App() {
         <Logo />
         <nav className="mt-6 flex flex-1 flex-col gap-1">
           {tabs.map((t) => (
-            <button key={t}
-                    className={`flex min-h-[44px] items-center gap-2 rounded-control px-3 text-sm font-medium
-                      ${tab === t ? 'bg-primary/10 text-primary' : 'hover:bg-bg'}`}
-                    onClick={() => setTab(t)}>
+            <button
+              key={t}
+              className={`flex min-h-[44px] items-center gap-2 rounded-control px-3 text-sm font-medium
+                ${tab === t ? 'bg-primary/10 text-primary' : 'hover:bg-bg hover:text-primary'}`}
+              onClick={() => setTab(t)}
+            >
               <span aria-hidden>{t === 'admin' ? '⚙️' : TABS.find((x) => x.id === t)?.icon}</span>
               {labels[t]}
             </button>
@@ -72,10 +76,12 @@ export default function App() {
       {/* Mobile bottom tabs */}
       <nav className="fixed inset-x-0 bottom-0 flex border-t border-brdr bg-surface md:hidden">
         {tabs.map((t) => (
-          <button key={t}
-                  className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]
-                    ${tab === t ? 'text-primary' : 'text-muted'}`}
-                  onClick={() => setTab(t)}>
+          <button
+            key={t}
+            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]
+              ${tab === t ? 'text-primary' : 'text-muted hover:text-primary'}`}
+            onClick={() => setTab(t)}
+          >
             <span aria-hidden className="text-base">{t === 'admin' ? '⚙️' : TABS.find((x) => x.id === t)?.icon}</span>
             {labels[t]}
           </button>

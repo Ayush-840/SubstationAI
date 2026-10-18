@@ -50,16 +50,16 @@ body {
            min-h-[44px];
   }
   .btn-primary {
-    @apply btn bg-primary text-white hover:opacity-90;
+    @apply btn bg-primary text-white hover:bg-primary/90 active:scale-[0.98];
   }
   .btn-secondary {
-    @apply btn border border-brdr bg-surface hover:bg-bg;
+    @apply btn border border-brdr bg-surface hover:bg-bg hover:border-primary/40 active:scale-[0.98];
   }
   .btn-danger {
-    @apply btn bg-danger text-white hover:opacity-90;
+    @apply btn bg-danger text-white hover:opacity-90 active:scale-[0.98];
   }
   .card {
-    @apply rounded-card border border-brdr bg-surface p-4;
+    @apply rounded-card border border-brdr bg-surface p-4 shadow-sm;
   }
   .chip {
     @apply inline-flex items-center rounded-full border border-brdr px-3 py-1.5 text-sm
@@ -70,7 +70,7 @@ body {
   }
   .input {
     @apply w-full rounded-control border border-brdr bg-surface px-3 py-2 text-sm
-           placeholder:text-muted min-h-[44px];
+           placeholder:text-muted min-h-[44px] focus:border-primary/60 focus:ring-1 focus:ring-primary/20;
   }
   .pill {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
@@ -87,9 +87,26 @@ body {
   50% { opacity: 0; }
 }
 
+/* Subtle entrance for cards and messages */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  animation: fade-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
+}
+
+/* Softer, classy selection */
+::selection {
+  background-color: rgb(var(--rgb-primary)/40%);
+  color: rgb(var(--rgb-text));
 }

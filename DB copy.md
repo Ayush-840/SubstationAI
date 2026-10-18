@@ -2,7 +2,7 @@
 
 Submit this file with `db/schema.sql` as the evidence pack for the DBMS rubric. Each section maps to one rubric (A = SQL, B = ORM, C = MongoDB). The final DBMS score is the **average of the three**, so none of them can be weak.
 
-**Not graded (do not spend time on):** normalization theory, ACID, query optimisation, indexing.
+**Not graded (do not spend time on).** Normalization theory, ACID, query optimisation, indexing.
 
 ---
 
@@ -11,7 +11,7 @@ Submit this file with `db/schema.sql` as the evidence pack for the DBMS rubric. 
 | Store | Holds | Reason |
 |---|---|---|
 | **PostgreSQL 16 + pgvector** | Users, sessions, the test catalog, standards, documents, chunks (text + embeddings), procedure runs | Strongly related, constrained data: many-to-many links, keys, checks. Ideal for ER modeling, joins, aggregation |
-| **MongoDB 7** | Conversations and messages, feedback, unanswered queries, fault logs, quiz attempts, audit events | Semi-structured, write-heavy, shape varies (citations arrays, variable meter readings, embedded quiz questions) |
+| **MongoDB 7** | Conversations and messages, feedback, unanswered queries, fault logs, quiz attempts, audit events | Semi-structured, write-heavy, shape varies (citation arrays, variable meter readings, embedded quiz questions) |
 | **Redis** | Cache, rate-limit counters, token deny-list, job queue | Not a scored database; supports ASD "advanced capabilities" |
 
 ## 2. Rubric A: Relational (SQL)
@@ -156,9 +156,10 @@ WHERE vec.id IS NOT NULL OR kw.id IS NOT NULL
 ORDER BY score DESC LIMIT 20;
 ```
 
-**DML that respects integrity:** deleting a test cascades to its steps, limits, troubleshooting and safety rows; it is *blocked* (`RESTRICT`) if any `procedure_runs` reference it. Deleting a user is a soft delete (`is_active = false`) so MongoDB documents that store `user_id` never dangle.
+**DML that respects integrity.** Deleting a test cascades to its steps, limits, troubleshooting and safety rows; it is *blocked* (`RESTRICT`) if any `procedure_runs` reference it. Deleting a user is a soft delete (`is_active = false`) so MongoDB documents that store `user_id` never dangle.
 
 ### 2.4 Be ready to write live in the viva
+
 Practice writing, from memory: a join across three tables, a GROUP BY with HAVING, a NOT EXISTS subquery, and a CTE, all against this schema.
 
 ## 3. Rubric B: ORM (SQLAlchemy 2.0)
@@ -169,11 +170,11 @@ Practice writing, from memory: a join across three tables, a GROUP BY with HAVIN
   - 1:N: `EquipmentClass.tests`, `Test.steps`, `Test.limits`, `Test.troubleshooting`
   - N:N: `Test.instruments` via `test_instruments`, `Test.standards` via `test_standards`
   - 1:1-style: `User.refresh_tokens` (1:N), `ProcedureRun.steps`
-- **Loading:** `selectinload` for the test detail page (avoids N+1 without SQL tuning talk); lazy loading elsewhere.
-- **Cascades:** `cascade="all, delete-orphan"` on `Test.steps/limits/troubleshooting`, matching `ON DELETE CASCADE` in the DDL.
-- **Model-level validation:** Pydantic schemas for request bodies plus SQLAlchemy `CheckConstraint` and `Enum` types.
-- **Migrations:** Alembic (`alembic revision --autogenerate`, `alembic upgrade head`). Be ready to explain how adding a column flows from model to migration to database.
-- **Where raw SQL is used and why:** the analytics and hybrid-retrieval queries in section 2.3, executed with `session.execute(text(...))`, because they are multi-table reports or use pgvector operators that read more clearly as SQL. Everything else goes through the ORM.
+- **Loading.** `selectinload` for the test detail page (avoids N+1 without SQL tuning talk); lazy loading elsewhere.
+- **Cascades.** `cascade="all, delete-orphan"` on `Test.steps/limits/troubleshooting`, matching `ON DELETE CASCADE` in the DDL.
+- **Model-level validation.** Pydantic schemas for request bodies plus SQLAlchemy `CheckConstraint` and `Enum` types.
+- **Migrations.** Alembic (`alembic revision --autogenerate`, `alembic upgrade head`). Be ready to explain how adding a column flows from model to migration to database.
+- **Where raw SQL is used and why.** The analytics and hybrid-retrieval queries in section 2.3, executed with `session.execute(text(...))`, because they are multi-table reports or use pgvector operators that read more clearly as SQL. Everything else goes through the ORM.
 
 ## 4. Rubric C: MongoDB (PyMongo/Motor, no ODM)
 
@@ -221,7 +222,8 @@ Use Motor (async PyMongo) directly with Pydantic models. Skipping an ODM keeps t
   "logged_at": "2026-09-30T08:00:00Z"
 }
 ```
-_(Numbers above are placeholders for the shape; the seed script generates realistic synthetic values.)_
+
+_Numbers above are placeholders for the shape; the seed script generates realistic synthetic values._
 
 ### 4.3 Operations used by the app
 
@@ -271,13 +273,16 @@ await db.conversations.delete_one({"_id": cid, "user_id": uid})
 Optional: a JSON Schema validator on `messages` and `quiz_attempts` (`db.create_collection(..., validator={...})`) to show consistent document shapes.
 
 ### 4.4 Keeping SQL and MongoDB consistent
+
 - Mongo documents store `user_id`, `test_id` and `equipment_class` as plain values from Postgres; there are no cross-database foreign keys.
 - Users are never hard-deleted, so those ids never dangle.
 - Catalog facts are never copied into Mongo; messages store only ids and citations. The catalog stays the single source of truth for limits.
 - If a test is renamed, old messages still read correctly because they store `test_id` and the name at the time is only display text.
 
 ### 4.5 Why MongoDB here (viva answer)
+
 Chat logs, feedback and fault logs are write-heavy, grow steadily, and have varying shapes. A document model fits them without schema changes for every new reading type. The catalog is the opposite: strongly related and constrained, so it lives in SQL.
 
 ## 5. Seed data (both stores)
+
 `python -m app.scripts.seed` loads: 5 equipment classes, 40+ tests with steps, limits, instruments and standards, about 300 synonyms, demo users for each role, about 50 sample conversations, 100 synthetic fault logs, and sample documents. Realistic seed data is an explicit ASD criterion.

@@ -1,163 +1,81 @@
-# PRD — SubstationIQ (Capstone Edition)
+# PRD — SubstationIQ, 15-Day Capstone Compliance Sprint
 
-**Intelligent chatbot for substation maintenance processes**
-Problem statement: Ministry of Power · 2023 · Software · Smart Education
-Team of 3 · One integrated project across Interactive Systems, Advanced Software Development and Data Engineering · Version 3.0
+Repo: [Ayush-840/SubstationAI](https://github.com/Ayush-840/SubstationAI) · Problem statement: Ministry of Power · 2023 · Software · Smart Education
+Team of 3 · Version 4.0 — **supersedes v3.0.** v3.0 assumed building the stack from zero. The repo already exists and works: FastAPI + SQLAlchemy + SQLite, Chroma + BM25 hybrid retrieval, NLP intent/entity layer, a 5-equipment-class test catalog, guided procedures, fault diagnosis with DGA rules, two roles (User/Admin), and an evaluation harness (30 cases, 34 backend tests, 100% intent accuracy, 93% entity accuracy). This document only covers what's **missing for full marks** and **new** against the three rubrics, built as a 15-day sprint on top of the working app.
 
 ---
 
-## 1. Product Summary
+## 1. Why This Document Exists
 
-SubstationIQ answers questions about substation maintenance in natural language and returns **structured, cited answers**: the test **procedure**, **acceptable limits**, **actions to resolve issues**, **applicable standards**, **safety guidelines** and **test equipment**. It understands questions semantically (synonyms, abbreviations, follow-ups), never invents numbers, and doubles as a **training tool** for new engineers (Smart Education).
+Only 4 commits exist on `main` as of Oct 12. Development-consistency is graded daily and cannot be backdated (5 of 15 ISD marks). Everything below is scoped and sequenced so that **all three teammates commit something real every day for 15 days**, while closing the specific gaps below. Nothing already working is rebuilt or risked.
 
-**Equipment classes:** Power Transformer, Reactor, Circuit Breaker, Instrument Transformer (CT/PT/CVT), Surge Arrester (extensible to isolators, batteries, earthing).
+## 2. Gap Analysis Against the Rubrics
 
-## 2. Problem Statement Traceability
+| Rubric | Current state | Gap | Addressed by |
+|---|---|---|---|
+| **DBMS — SQL (Rubric A)** | SQLite via SQLAlchemy; schema exists in code | No submitted ER diagram, no data dictionary, no documented representative query set | FR-1, Day 1–2 |
+| **DBMS — ORM (Rubric B)** | SQLAlchemy used for CRUD | No documentation of model-to-schema mapping, relationships, or raw-SQL justification | FR-1, Day 1–2 |
+| **DBMS — MongoDB (Rubric C)** | **Absent entirely** — a polyglot project with no NoSQL component likely scores the DBMS component on Rubric A alone, well under what a polyglot design could earn | FR-2, Day 2–5 |
+| **ASD — Authentication** | JWT login/logout exists | No refresh-token rotation or expiry/renewal story documented | FR-3, Day 6 |
+| **ASD — Authorization** | Two roles (User, Admin) | Fault diagnosis and DGA are engineer-level tools gated only by being logged in, not by role; no ownership checks documented | FR-4, Day 7 |
+| **ASD — API Design** | Endpoints work | No consistent envelope, no pagination/filtering/sorting on list endpoints, no versioning | FR-5, Day 6 |
+| **ASD — Security** | Basic auth | No rate limiting, no documented CORS/security-header policy | FR-6, Day 8 |
+| **ASD — Advanced Capabilities (≥2)** | SSE streaming + LLM integration already count as two | Add a third for headroom and to directly solve a real need | FR-7, Day 9–10 |
+| **ASD — Deployment & Docs** | Docker Compose locally | No public deployed link; no exported API/architecture docs | FR-8, Day 14 |
+| **Problem statement coverage** | Procedure, limits, troubleshooting, standards, equipment, safety all answered via chat | No dedicated **Result Checker** (enter a measured value, get a verdict against the catalog limit) — the most literal reading of "probable values/acceptable limits" in the problem statement | FR-9, Day 7–9 |
+| **ISD — Development Consistency** | 4 commits total | No daily cadence, no evidence of 3 contributors | Day-by-day plan below, all 15 days |
 
-| Problem statement | Requirement |
-|---|---|
-| Transformer, Reactors, CB, Instrument Transformers, Surge Arrestors | Catalog and knowledge base per equipment class (FR-1, FR-2) |
-| Tests with procedures | Procedure answers and guided procedure runs (FR-5, FR-16) |
-| Probable values / acceptable limits | Sourced limits, condition-aware, plus result checker (FR-6, FR-19) |
-| Actions to resolve issues | Troubleshooting answers and fault diagnosis (FR-7, FR-17) |
-| NLP chatbot, semantic processing | Intent detection, entity and synonym handling, embedding retrieval (FR-3, FR-4) |
-| Industrial standards | Standards on every test (FR-8) |
-| Safety guidelines | Fixed safety blocks and guardrails (FR-9) |
-| Test equipment | Instrument list per test (FR-10) |
+## 3. New Features (Functional Requirements)
 
-## 3. Capstone Requirements Mapping
-
-| Capstone requirement | How SubstationIQ satisfies it |
-|---|---|
-| **Interactive Systems (ISD):** app of your choice | **Web app** (React), allowed for online delivery |
-| **Advanced Software Development:** backend | FastAPI, layered, versioned REST API, JWT auth with refresh, RBAC, validation, security, Redis caching, background jobs, streaming |
-| **Data Engineering:** database | PostgreSQL (SQL rubric + ORM rubric) and MongoDB (NoSQL rubric), with ER diagram, DDL, queries, collection design |
-| Consistent daily commits | Team work-split and daily-commit plan in BUILD_GUIDE.md |
-| Group viva | Cross-training plan and viva prep in RUBRIC_CHECKLIST.md |
-
-## 4. Users and Roles
-
-| Role | Description | Key permissions |
+| ID | Requirement | Rubric it earns marks under |
 |---|---|---|
-| **Trainee** (default) | New technician or student | Chat, learn mode and quizzes, guided procedures, result checker, own history |
-| **Engineer** | Experienced maintenance staff | Everything a trainee can do, plus fault diagnosis, DGA tool, create and edit draft catalog entries |
-| **Admin** | Knowledge manager | Everything, plus verify catalog entries, upload documents, user management, analytics |
+| FR-1 | ER diagram, data dictionary, and a documented set of real queries (joins, GROUP BY/HAVING, subquery or CTE) run by the actual app | DBMS A, B |
+| FR-2 | **MongoDB** for conversations, messages (with embedded citations), feedback, and fault logs — justified by access pattern, not mirrored from SQL | DBMS C |
+| FR-3 | Refresh-token rotation, revocation on logout, documented expiry | ASD Auth |
+| FR-4 | Three roles — **Trainee, Engineer, Admin** — enforced centrally; fault diagnosis and DGA require Engineer+; ownership checks on conversations/feedback/procedure runs | ASD AuthZ |
+| FR-5 | Response envelope, pagination/filtering/sorting on catalog and conversation-list endpoints, `/api/v1` versioning | ASD API Design |
+| FR-6 | Rate limiting on login and chat; CORS allow-list; security headers | ASD Security |
+| FR-7 | Redis cache for repeated catalog/answer lookups (third advanced capability, cuts LLM calls and latency) | ASD Advanced Capabilities |
+| FR-8 | Deployed public link; exported OpenAPI; README/architecture docs updated to match reality | ASD Deployment & Docs |
+| FR-9 | **Result Checker:** user enters equipment, test, measured value, unit → deterministic within/borderline/outside verdict against `test_limits`, with the cited limit | Product completeness; a live SQL query for the viva |
+| FR-10 | ER diagram and Mongo collection notes committed as `docs/DB.md`; RUBRIC_CHECKLIST.md kept current as evidence index | DBMS D (viva), overall traceability |
 
-Ownership rule: users can view, edit and delete only their own conversations, feedback, procedure runs and quiz attempts.
+## 4. Non-Goals for This Sprint
 
-## 5. Functional Requirements
+- **No migration off SQLite.** The SQL rubric does not require Postgres ("MySQL, PostgreSQL, SQLite, SQL Server, etc." are all acceptable); migrating a working, tested system under a 15-day deadline is a risk with no marks upside. Revisit only after submission if desired.
+- No new equipment classes or catalog content beyond what's needed to demo the Result Checker and Mongo features.
+- No Hindi/voice/OCR stretch features.
 
-### P0 (must have; core marks)
-| ID | Requirement |
+## 5. Team and Daily-Commit Principle
+
+| Member | Owns in this sprint |
 |---|---|
-| FR-1 | Five equipment classes with a knowledge base |
-| FR-2 | Structured test catalog (steps, limits, instruments, standards, safety, troubleshooting) with draft and verified states; every limit has a source |
-| FR-3 | Chat with streaming answers and saved history |
-| FR-4 | Semantic query processing: intent, equipment/test recognition, synonyms and abbreviations, follow-ups, clarifying questions |
-| FR-5 | Procedure answers (ordered steps) |
-| FR-6 | Limits answers with units, conditions, standard and source |
-| FR-7 | Troubleshooting answers (probable causes, actions) |
-| FR-8 | Standards references on answers |
-| FR-9 | Safety guidance on every relevant answer; refusal to help bypass safety devices |
-| FR-10 | Test equipment list per activity |
-| FR-11 | Citations on every answer |
-| FR-12 | "Not found" behaviour with logging of unanswered queries |
-| FR-13 | Register, login, refresh, logout, password reset; roles enforced |
-| FR-14 | Admin: upload and manage documents, verify catalog entries |
-| FR-15 | Catalog browser (search, filter, sort, paginate) |
+| **A — Data & Backend** | MongoDB integration, ER diagram, DB.md, RBAC, refresh tokens |
+| **B — API & Platform** | API envelope/pagination/versioning, rate limiting, security headers, Redis cache, deployment |
+| **C — Product & Frontend** | Result Checker UI + API, role-aware navigation, conversation history backed by Mongo, docs/README |
 
-### P1 (should have; differentiators)
-| ID | Requirement |
-|---|---|
-| FR-16 | **Guided Procedure Mode:** checklist with mandatory safety confirmations, saved runs, PDF export |
-| FR-17 | **Fault Diagnosis:** symptoms and readings to ranked probable causes with sources |
-| FR-18 | **Learn Mode:** plain-language explanations and quizzes with progress tracking |
-| FR-19 | **Result Checker:** enter a measured value, get within / borderline / outside limits with the cited limit |
-| FR-20 | **DGA tool:** dissolved gas analysis interpretation with an interactive Duval triangle plot, implemented from the published standard (IEC 60599 / IEEE C57.104) |
-| FR-21 | Answer feedback and admin analytics (top questions, unanswered, ratings) |
-| FR-22 | Evaluation dashboard (intent accuracy, retrieval, faithfulness, limit exactness, latency) |
+Every day, every member pushes at least one meaningful, reviewable commit — a working slice, a test, a migration, or documentation — never a single end-of-sprint dump. See TRD.md §2 for the exact day-by-day breakdown and suggested commit messages.
 
-### P2 (stretch)
-Hindi and English, voice input, nameplate OCR, weekly email digest of unanswered queries to admins.
+## 6. Success Criteria
 
-## 6. Non-Functional Requirements
+- `docs/DB.md` exists with an ER diagram, data dictionary, 5+ representative SQL queries actually used by the app, and Mongo collection notes with sample documents.
+- MongoDB holds conversations, messages, feedback, and fault logs; the SQL catalog remains the source of truth for limits.
+- Three roles are enforced and demonstrable; ownership checks pass tests.
+- `/api/v1` endpoints return a consistent envelope with pagination/filtering/sorting on at least catalog and conversation lists.
+- Rate limiting returns 429 on abuse of `/auth/login` and `/chat/stream`.
+- Redis cache measurably cuts repeat-query latency (shown in the eval report).
+- Result Checker returns correct verdicts against the existing `test_limits` table and is reachable from the UI.
+- App is deployed at a public URL; README reflects the actual stack.
+- Commit graph shows all three members committing on all 15 days.
 
-| Area | Requirement |
-|---|---|
-| Accuracy | ≥ 85% answer correctness; **100% of shown limits match the catalog or cited source** |
-| Latency | First token < 3 s; p50 full answer < 8 s (cached answers < 1 s) |
-| Security | HTTPS, hashed passwords, JWT with expiry and refresh, RBAC, rate limiting, CORS allow-list, validated input, no internal errors exposed |
-| Reliability | LLM provider fallback; health and readiness endpoints |
-| Usability | Responsive, field-friendly, WCAG AA contrast |
-| Maintainability | Layered code, tests, structured logs, CI |
-
-## 7. Success Metrics
-
-| Metric | Target |
-|---|---|
-| Intent accuracy | ≥ 90% |
-| Entity recognition (equipment, test) | ≥ 90% |
-| Answer correctness (100-item set) | ≥ 85% |
-| Limit exact match | 100% |
-| Citation accuracy | ≥ 90% |
-| Refusal accuracy (out-of-scope, unsupported) | ≥ 90% |
-| Safety notice on live-equipment answers | 100% |
-| Backend test coverage on services layer | ≥ 70% |
-| Pilot: 10+ users (classmates, one faculty reviewer), positive feedback | ≥ 80% |
-
-## 8. What Makes It Stand Out
-
-1. **Safety-first design:** fixed, non-LLM safety blocks and an interlock-bypass refusal.
-2. **Trust by construction:** limits come only from a verified, sourced catalog; a number-verification step blocks invented values.
-3. **Verification workflow:** engineers draft, admins verify; only verified records power answers.
-4. **Real engineering tools:** result checker and DGA Duval triangle.
-5. **Smart Education:** learn mode, quizzes, progress tracking.
-6. **Evidence:** evaluation report with ablations (RAG only vs catalog + RAG; vector vs keyword vs hybrid vs rerank).
-7. **Real-world validation:** short pilot with electrical-department students or faculty, with feedback in the report.
-8. **Polish:** deployed link, CI badge, clean README, 3-minute demo video.
-
-## 9. Scope Boundaries
-
-- No live SCADA, no control actions, not a replacement for official procedures or permits.
-- Sample SOPs are labelled as samples; limits are taken from cited public sources.
-- Native mobile apps are out of scope (responsive web only).
-
-## 10. Team Roles (3 members, assigned by the course)
-
-| Member | Focus | Also owns |
-|---|---|---|
-| **A: Intelligence** | NLP, retrieval, LLM integration, guardrails, evaluation | Catalog content for 2 to 3 equipment classes |
-| **B: Backend & Data** | FastAPI core, auth/RBAC, PostgreSQL + MongoDB, migrations, Redis and jobs, security, deployment | Catalog content for 1 to 2 classes, DB documentation |
-| **C: Frontend & Product** | React app, UX, guided procedures, learn mode, testing, demo and documentation | Catalog content for 1 to 2 classes, design doc |
-
-Everyone: reviews at least half of the others' pull requests, and commits daily. Detailed plan in BUILD_GUIDE.md.
-
-## 11. Milestones
-
-| Phase | Weeks | Outcome |
-|---|---|---|
-| Foundation | 1 | Repo, CI, Docker, schema, auth skeleton, first catalog entries |
-| Core | 2 to 4 | Catalog + ingestion + retrieval + chat working end to end |
-| Product | 5 to 6 | Structured answers, guardrails, procedures, RBAC, admin, analytics |
-| Differentiators | 7 | Result checker, DGA tool, learn mode, evaluation |
-| Finish | 8 | Deployment, docs, report, demo video, viva prep |
-
-_If the semester timeline is shorter, compress by cutting P1 items in this order: DGA tool, quizzes, PDF export._
-
-## 12. Risks
+## 7. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Limited real documents | Public OEM manuals and standards; label samples; source every limit |
-| Wrong limits in catalog | Mandatory source, validator in CI, admin verification, faculty spot-check |
-| Team of 3 unevenly loaded | Vertical slices, shared catalog work, PR reviews |
-| Too many services for the timeline | Docker Compose; managed free tiers; cut P1 first |
-| LLM quota | Caching, provider fallback, offline model option |
-| Viva gaps | Weekly cross-training sessions; viva Q&A in RUBRIC_CHECKLIST.md |
+| Mongo added late breaks the working eval suite | Mongo is additive (new collections for new data), not a replacement for the SQL catalog; run the existing 34-test suite after each merge |
+| RBAC change locks out existing demo users | Add the Engineer role via migration with a default mapping (existing non-admin users → Trainee), update seed data, re-run `pytest -q` before merging |
+| 15 days is tight for 3 people around other coursework | Daily tasks are intentionally small (1–3 hours); heavier items (Mongo setup, deployment) are frontloaded earlier in the sprint, lighter items (docs, tests, catalog data) fill the back half and weekends |
+| Rate limiting breaks the eval harness (30 rapid-fire calls) | Exempt the eval harness's service account or run it with limits raised via an env var in CI |
 
-## 13. Deliverables
-
-Deployed app · GitHub repo with meaningful history · README · PRD, TRD, DESIGN, DB docs · ER diagram, DDL, queries, Mongo collection notes · Evaluation report · Project report · Demo video · Viva readiness.
-
-## 14. Disclaimer
+## 8. Disclaimer
 SubstationIQ is an informational aid and does not replace official procedures, OEM instructions, permits or trained personnel.

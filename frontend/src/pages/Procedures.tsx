@@ -35,7 +35,8 @@ export default function Procedures() {
     if (!eq) return
     api.get<TestSummary[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}`)
       .then(setTests).catch(() => {})
-  }, [equipId, equipment])
+  }, [equipId])
+  useEffect(() => { setTests([]); }, [equipment])
 
   const safetySteps = useMemo(
     () => (run ? Object.values(run.steps_state).filter((s) => s.type === 'safety') : []),
@@ -197,23 +198,26 @@ export default function Procedures() {
 
       {error && <p className="text-sm text-danger" role="alert">{error}</p>}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        {(equipId ? tests : []).map((t) => (
-          <div key={t.id} className="card space-y-2">
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="font-medium">{t.name}</h3>
-              <span className="pill bg-primary/10 text-primary">{t.category ?? 'routine'}</span>
+      {!equipId ? (
+        <p className="text-sm text-muted">Select an equipment class to list its tests.</p>
+      ) : tests.length === 0 ? (
+        <p className="text-sm text-muted">No tests yet for this equipment class.</p>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {tests.map((t) => (
+            <div key={t.id} className="card space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="font-medium">{t.name}</h3>
+                <span className="pill bg-primary/10 text-primary">{t.category ?? 'routine'}</span>
+              </div>
+              {t.summary && <p className="text-sm text-muted">{t.summary}</p>}
+              <button className="btn-primary !min-h-[36px] w-fit" onClick={() => start(t.id)}>
+                Start procedure
+              </button>
             </div>
-            {t.summary && <p className="text-sm text-muted">{t.summary}</p>}
-            <button className="btn-primary !min-h-[36px] w-fit" onClick={() => start(t.id)}>
-              Start procedure
-            </button>
-          </div>
-        ))}
-        {!equipId && (
-          <p className="text-sm text-muted">Select an equipment class to list its tests.</p>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
       {runs.length > 0 && (
         <div className="space-y-2">

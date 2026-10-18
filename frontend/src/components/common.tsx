@@ -1,6 +1,6 @@
 import React from 'react'
 
-// Safety banner: fixed (non-LLM) safety notice per TRD §8.5. Amber, high-contrast.
+// Safety banner: fixed (non-LLM) safety notice. Amber, high-contrast.
 export function SafetyBanner({ compact = false }: { compact?: boolean }) {
   return (
     <div
@@ -33,6 +33,18 @@ export function DangerBanner({ message }: { message: string }) {
       style={{ borderLeftWidth: '4px' }}
     >
       <span aria-hidden>⛔</span> {message}
+    </div>
+  )
+}
+
+// Out-of-scope notice — calm, plain, never alarming.
+export function OutOfScopeNotice({ message }: { message: string }) {
+  return (
+    <div
+      role="note"
+      className="rounded-card border border-muted bg-muted/10 px-4 py-3 text-sm text-muted"
+    >
+      {message}
     </div>
   )
 }

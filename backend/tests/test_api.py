@@ -14,7 +14,10 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_test_db.name}"
 os.environ["LLM_PROVIDER"] = "none"
 os.environ["CHROMA_PATH"] = tempfile.mkdtemp(prefix="siq_chroma_")
 
+import json  # noqa: E402
+
 import pytest  # noqa: E402
+from bson import ObjectId  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
@@ -22,12 +25,8 @@ from app.db.session import engine, Base, SessionLocal  # noqa: E402
 from app.catalog.loader import load_catalog_to_db, register_sample_documents  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
 from app.db.models import User, UserRole  # noqa: E402
-
-# Keep the v1 router in sync with the old (un-prefixed) route tree during the
-# sprint so existing tests and the eval harness keep hitting the same paths.
-from app.api.v1 import api_router  # noqa: E402
-from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback  # noqa: E402
-_old_router_prefix = api_router.prefix
+from app.db.mongo import get_mongo  # noqa: E402
+from tests.mongo_fakes import FakeMongoDB  # noqa: E402
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -57,22 +56,33 @@ def setup_db():
     finally:
         db.close()
     yield
-    api_router.prefix = _old_router_prefix
 
 
 @pytest.fixture(scope="module")
 def client():
-    # During the sprint the app mounts /api/v1 only, but the existing test
-    # suite and eval harness still target the old (un-prefixed) paths. Expose
-    # both trees for the duration of this test module so nothing regresses.
-    for sub in (auth.router, chat.router, catalog.router, procedures.router,
-                diagnosis.router, learn.router, admin.router, feedback.router):
-            app.include_router(sub)
     with TestClient(app) as c:
         yield c
-    for sub in (auth.router, chat.router, catalog.router, procedures.router,
-                diagnosis.router, learn.router, admin.router, feedback.router):
-        app.routes[:] = [r for r in app.routes if r is not sub]
+
+
+@pytest.fixture(autouse=True)
+def mongo_disabled():
+    """Keep MongoDB out of the suite unless a test opts in with `fake_mongo`.
+
+    The override hits the FastAPI dependency itself, so no request can ever
+    stall on a real server-selection timeout.
+    """
+    app.dependency_overrides[get_mongo] = lambda: None
+    yield None
+    app.dependency_overrides.pop(get_mongo, None)
+
+
+@pytest.fixture
+def fake_mongo(mongo_disabled):
+    """Route the Mongo dependency to an in-memory database for one test."""
+    db = FakeMongoDB()
+    app.dependency_overrides[get_mongo] = lambda: db
+    yield db
+    app.dependency_overrides[get_mongo] = lambda: None
 
 
 def _login(client, email):
@@ -319,4 +329,107 @@ def test_conversation_history(client, user_headers):
             f"/api/chat/conversations/{cid}", headers=user_headers
         ).status_code
         == 200
+    )
+
+
+# --- Day 3 B/C: chat persistence and history backed by MongoDB ----------------
+
+
+def _sse_events(text: str) -> list[dict]:
+    events = []
+    for part in text.split("\n\n"):
+        line = next((ln for ln in part.splitlines() if ln.startswith("data: ")), "")
+        if line:
+            events.append(json.loads(line.removeprefix("data: ")))
+    return events
+
+
+def test_chat_persists_turn_to_mongo(client, user_headers, fake_mongo):
+    """POST /api/chat mirrors the conversation header and both messages."""
+    created = client.post(
+        "/api/chat",
+        headers=user_headers,
+        json={"message": "What is the acceptable contact resistance for a circuit breaker?"},
+    ).json()
+
+    conversations = fake_mongo.documents("conversations")
+    messages = fake_mongo.documents("messages")
+
+    assert len(conversations) == 1
+    conv = conversations[0]
+    assert conv["sql_id"] == created["conversation_id"]
+    assert conv["user_id"]  # owner recorded for the ownership check later
+    assert conv["mode"] == "qa"
+
+    assert len(messages) == 2
+    assert {m["role"] for m in messages} == {"user", "assistant"}
+    assert created["message_id"] in {m["sql_id"] for m in messages}
+    # messages reference the conversation as a BSON ObjectId (TRD §3.1),
+    # ready for an untyped $lookup later.
+    assert all(isinstance(m["conversation_id"], ObjectId) for m in messages)
+    assert {m["conversation_id"] for m in messages} == {ObjectId(conv["_id"])}
+
+
+def test_chat_stream_mirrors_to_mongo(client, user_headers, fake_mongo):
+    """The SSE endpoint persists the same turn once the answer finishes."""
+    res = client.post(
+        "/api/chat/stream",
+        headers=user_headers,
+        json={
+            "message": "What is the acceptable contact resistance for a circuit breaker?",
+            "equipment": "Circuit Breaker",
+            "mode": "qa",
+        },
+    )
+    assert res.status_code == 200
+    events = _sse_events(res.text)
+    assert any(e["type"] == "done" for e in events)
+    errors = [e for e in events if e["type"] == "error"]
+    assert not errors, errors
+
+    conversations = fake_mongo.documents("conversations")
+    messages = fake_mongo.documents("messages")
+    assert len(conversations) == 1
+    assert len(messages) == 2
+    assert {m["role"] for m in messages} == {"user", "assistant"}
+    answer = next(m for m in messages if m["role"] == "assistant")
+    assert answer["content"]
+    assert isinstance(answer["citations"], list) and answer["citations"]
+    # a repeated stream for the same conversation must not duplicate the header
+    client.post(
+        "/api/chat/stream",
+        headers=user_headers,
+        json={"conversation_id": conversations[0]["sql_id"], "message": "And the tan delta limit?"},
+    )
+    assert len(fake_mongo.documents("conversations")) == 1
+    assert len(fake_mongo.documents("messages")) == 4
+
+
+def test_history_reads_from_mongo(client, user_headers, fake_mongo):
+    """History list and detail come out of MongoDB with stable integer ids."""
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "SFRA test on transformer"}
+    ).json()
+    cid = created["conversation_id"]
+
+    listing = client.get("/api/chat/conversations", headers=user_headers).json()
+    row = next(r for r in listing if r["id"] == cid)
+    assert row["message_count"] == 2
+    assert row["title"]
+
+    detail = client.get(f"/api/chat/conversations/{cid}", headers=user_headers).json()
+    assert detail["id"] == cid
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
+    assert all(isinstance(m["id"], int) for m in detail["messages"])
+
+    # delete removes the mirror as well as the SQLite row
+    assert (
+        client.delete(f"/api/chat/conversations/{cid}", headers=user_headers).status_code
+        == 200
+    )
+    assert fake_mongo.documents("conversations") == []
+    assert fake_mongo.documents("messages") == []
+    assert (
+        client.get(f"/api/chat/conversations/{cid}", headers=user_headers).status_code
+        == 404
     )

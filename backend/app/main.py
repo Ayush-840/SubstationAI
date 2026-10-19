@@ -5,29 +5,34 @@ from app.core.config import get_settings
 from app.db.session import engine, Base
 from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback
 from app.api.v1 import api_router
-from app.db.mongo import get_mongo, close_mongo
-from anyio import create_task_group
-import anyio
+from app.db.mongo import get_mongo, close_mongo, ensure_indexes
 
 settings = get_settings()
+
+# During the sprint both trees stay mounted: the legacy /api/... paths the
+# frontend and the eval harness already call, and the /api/v1 tree the sprint
+# is migrating to (TRD §3.5 — old paths keep working until Day 10).
+LEGACY_ROUTERS = (
+    auth.router,
+    chat.router,
+    catalog.router,
+    procedures.router,
+    diagnosis.router,
+    learn.router,
+    admin.router,
+    feedback.router,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
-    # Warm a singleton Motor client at startup so the first request does not
-    # pay connection-setup latency. The client is closed on shutdown.
-    try:
-        app.state.mongo = await get_mongo()
-    except Exception:
-        app.state.mongo = None
-
-    global _MONGO_MIRROR_TG
-    async with create_task_group() as tg:
-        _MONGO_MIRROR_TG = tg
-        app.state._mongo_mirror_tg = tg
-        yield
-        _MONGO_MIRROR_TG = None
+    # One fast probe (1.5 s) at startup; get_mongo() returns None and backs off
+    # while MongoDB is down so SQLite-backed requests are never stalled.
+    mongo_db = await get_mongo()
+    if mongo_db is not None:
+        await ensure_indexes(mongo_db)
+    yield
     await close_mongo()
 
 
@@ -47,6 +52,8 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+for legacy_router in LEGACY_ROUTERS:
+    app.include_router(legacy_router)
 
 
 @app.get("/health")

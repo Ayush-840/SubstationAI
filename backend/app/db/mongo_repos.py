@@ -147,10 +147,12 @@ class ConversationRepo:
     async def update_one(
         self, conversation_id: Any, user_id: int, **fields: Any
     ) -> bool:
-        """Patch an existing conversation (owner-scoped)."""
+        """Patch an existing conversation (owner-scoped).
+
+        Called with no extra fields after each mirrored turn to bump
+        ``updated_at``.
+        """
         fields = {k: v for k, v in fields.items() if v is not None}
-        if not fields:
-            return False
         fields["updated_at"] = _utcnow()
         result = await self._coll.update_one(
             self._filter(conversation_id, user_id), {"$set": fields}

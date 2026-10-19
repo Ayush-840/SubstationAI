@@ -224,3 +224,6 @@ class AnalyticsResponse(BaseModel):
     unanswered_rate: float
     top_questions: List[Dict[str, Any]]
     unanswered_queries: List[Dict[str, Any]]
+
+
+from app.schemas.mongo import ConversationDoc, MessageDoc  # noqa: E402,F401

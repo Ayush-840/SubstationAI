@@ -296,3 +296,130 @@ class TestMessageRepo:
         assert row["entities"] == {"equipment": "Power Transformer"}
         assert row["citations"] == [{"document": "TR-01", "page": 12}]
         assert row["confidence"] == 0.87
+
+
+# --- Day 3 additions: SQLite id bridge, updates and Pydantic documents -------
+
+from bson.errors import InvalidId  # noqa: E402
+
+from app.db.mongo_repos import MessageNotFound, to_object_id  # noqa: E402
+from app.schemas import ConversationDoc, MessageDoc  # noqa: E402
+from tests.mongo_fakes import FakeMongoDB  # noqa: E402
+
+
+class TestObjectIdBoundary:
+    def test_to_object_id_accepts_object_id_and_hex(self):
+        oid = ObjectId()
+        assert to_object_id(oid) is oid
+        assert to_object_id(str(oid)) == oid
+
+    def test_to_object_id_rejects_garbage(self):
+        with pytest.raises(InvalidId):
+            to_object_id("not-an-object-id")
+
+    def test_plain_sql_id_is_not_a_valid_object_id(self):
+        # Endpoints resolve SQLite ids through the repo's sql_id bridge;
+        # they must never reach to_object_id directly.
+        with pytest.raises(InvalidId):
+            to_object_id(12)
+
+
+class TestConversationSqlBridge:
+    @pytest.mark.asyncio
+    async def test_insert_stores_sql_id_and_reads_back(self):
+        db = FakeMongoDB()
+        repo = ConversationRepo(db)
+        conv_id = await repo.insert_one(
+            user_id=7, title="Bridge", mode="qa", sql_id=42
+        )
+        stored = db.documents("conversations")[0]
+        assert stored["sql_id"] == 42
+        assert stored["user_id"] == 7
+
+        by_sql = await repo.find_by_id_and_user(42, user_id=7)
+        assert by_sql is not None and by_sql["_id"] == conv_id
+        assert await repo.find_by_id_and_user(43, user_id=7) is None
+        assert await repo.find_by_id_and_user(42, user_id=8) is None
+
+    @pytest.mark.asyncio
+    async def test_update_one_patches_owner_scoped_fields(self):
+        db = FakeMongoDB()
+        repo = ConversationRepo(db)
+        conv_id = await repo.insert_one(
+            user_id=7, title="Old", mode="qa", sql_id=5
+        )
+
+        assert await repo.update_one(conv_id, user_id=7, title="New") is True
+        assert (await repo.find_by_id_and_user(conv_id, 7))["title"] == "New"
+        assert (await repo.find_by_id_and_user(conv_id, 7))["updated_at"] is not None
+
+        # A different owner cannot patch the row.
+        assert await repo.update_one(conv_id, user_id=8, title="Hacked") is False
+        assert (await repo.find_by_id_and_user(conv_id, 7))["title"] == "New"
+
+    @pytest.mark.asyncio
+    async def test_delete_one_by_sql_id(self):
+        db = FakeMongoDB()
+        repo = ConversationRepo(db)
+        await repo.insert_one(user_id=1, title="Gone", mode="qa", sql_id=9)
+        assert await repo.delete_one(9, user_id=1) is True
+        assert await repo.find_by_id_and_user(9, user_id=1) is None
+
+
+class TestMessageSqlBridge:
+    @pytest.mark.asyncio
+    async def test_resolve_conversation_by_sql_id(self):
+        db = FakeMongoDB()
+        conv_repo = ConversationRepo(db)
+        msg_repo = MessageRepo(db)
+        conv_oid = await conv_repo.insert_one(
+            user_id=1, title="T", mode="qa", sql_id=11
+        )
+
+        msg_id = await msg_repo.insert_one(11, "user", "hello", sql_id=101)
+        stored = db.documents("messages")[0]
+        assert stored["conversation_id"] == ObjectId(conv_oid)
+        assert stored["sql_id"] == 101
+
+        rows = await msg_repo.find_many_by_conversation(11)
+        assert len(rows) == 1 and rows[0]["_id"] == msg_id
+        assert await msg_repo.count_by_conversation(11) == 1
+
+        found = await msg_repo.find_by_sql_id(101)
+        assert found is not None and found["content"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_unknown_sql_conversation_is_not_mirrored(self):
+        db = FakeMongoDB()
+        msg_repo = MessageRepo(db)
+        with pytest.raises(MessageNotFound):
+            await msg_repo.insert_one(999, "user", "hi")
+        assert await msg_repo.find_many_by_conversation(999) == []
+        assert await msg_repo.count_by_conversation(999) == 0
+
+
+class TestPydanticDocuments:
+    @pytest.mark.asyncio
+    async def test_conversation_doc_validates_from_motor_doc(self):
+        db = FakeMongoDB()
+        conv_id = await ConversationRepo(db).insert_one(
+            user_id=3, title="Doc", mode="procedure", sql_id=21
+        )
+        doc = ConversationDoc.model_validate(db.documents("conversations")[0])
+        assert doc.id == conv_id
+        assert doc.public_id == 21
+        dumped = doc.model_dump(mode="json")
+        assert dumped["id"] == conv_id and "_id" not in dumped
+        assert dumped["mode"] == "procedure"
+
+    @pytest.mark.asyncio
+    async def test_message_doc_stringifies_object_ids(self):
+        db = FakeMongoDB()
+        await ConversationRepo(db).insert_one(
+            user_id=3, title="Doc", mode="qa", sql_id=21
+        )
+        await MessageRepo(db).insert_one(21, "assistant", "answer", sql_id=22)
+        doc = MessageDoc.model_validate(db.documents("messages")[0])
+        assert isinstance(doc.conversation_id, str)
+        assert doc.public_id == 22
+        assert doc.model_dump(mode="json")["conversation_id"] == doc.conversation_id

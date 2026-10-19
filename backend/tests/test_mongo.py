@@ -423,3 +423,159 @@ class TestPydanticDocuments:
         assert isinstance(doc.conversation_id, str)
         assert doc.public_id == 22
         assert doc.model_dump(mode="json")["conversation_id"] == doc.conversation_id
+
+
+# --- Day 4 additions: feedback and fault_logs collections ---------------------
+
+from app.db.mongo_repos import FaultLogRepo, FeedbackRepo  # noqa: E402
+from app.schemas import FaultLogDoc, FeedbackDoc  # noqa: E402
+
+
+class TestFeedbackRepo:
+    @pytest.mark.asyncio
+    async def test_upsert_resolves_sql_message_id_to_objectid(self):
+        """The vote stores the message's ObjectId, not the SQLite id."""
+        db = FakeMongoDB()
+        await ConversationRepo(db).insert_one(
+            user_id=1, title="T", mode="qa", sql_id=11
+        )
+        await MessageRepo(db).insert_one(11, "assistant", "answer", sql_id=101)
+
+        stored = await FeedbackRepo(db).upsert_one(
+            101, user_id=1, rating=1, comment="clear"
+        )
+        message_oid = db.documents("messages")[0]["_id"]
+        raw = db.documents("feedback")[0]
+        assert raw["message_id"] == message_oid  # BSON type matches messages._id
+        assert stored["message_id"] == str(message_oid)
+        assert stored["rating"] == 1 and stored["comment"] == "clear"
+        assert stored["created_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_upsert_replaces_the_existing_vote(self):
+        db = FakeMongoDB()
+        await ConversationRepo(db).insert_one(
+            user_id=1, title="T", mode="qa", sql_id=11
+        )
+        await MessageRepo(db).insert_one(11, "assistant", "answer", sql_id=101)
+        repo = FeedbackRepo(db)
+
+        first = await repo.upsert_one(101, user_id=1, rating=1)
+        second = await repo.upsert_one(101, user_id=1, rating=-1, comment="wrong")
+
+        assert len(db.documents("feedback")) == 1
+        assert second["rating"] == -1 and second["comment"] == "wrong"
+        assert second["created_at"] == first["created_at"]  # untouched by re-vote
+        found = await repo.find_one(101, user_id=1)
+        assert found is not None and found["rating"] == -1
+
+    @pytest.mark.asyncio
+    async def test_upsert_rejects_unknown_or_unmirrored_message(self):
+        db = FakeMongoDB()
+        repo = FeedbackRepo(db)
+        with pytest.raises(MessageNotFound):
+            await repo.upsert_one(999, user_id=1, rating=1)
+        with pytest.raises(InvalidId):
+            await repo.upsert_one("not-an-id", user_id=1, rating=1)
+        assert db.documents("feedback") == []
+        assert await repo.find_one(999, user_id=1) is None
+        assert await repo.find_many_by_message(999) == []
+
+    @pytest.mark.asyncio
+    async def test_find_many_by_message_returns_all_votes(self):
+        db = FakeMongoDB()
+        await ConversationRepo(db).insert_one(
+            user_id=1, title="T", mode="qa", sql_id=11
+        )
+        await MessageRepo(db).insert_one(11, "assistant", "answer", sql_id=101)
+        repo = FeedbackRepo(db)
+        await repo.upsert_one(101, user_id=1, rating=1)
+        await repo.upsert_one(101, user_id=2, rating=-1)
+
+        rows = await repo.find_many_by_message(101)
+        assert {r["user_id"] for r in rows} == {1, 2}
+
+
+class TestFaultLogRepo:
+    @pytest.mark.asyncio
+    async def test_insert_and_list_newest_first(self):
+        db = FakeMongoDB()
+        repo = FaultLogRepo(db)
+        first = await repo.insert_one(
+            user_id=1,
+            equipment_class="Power Transformer",
+            symptoms=["oil leak"],
+            readings={"moisture_ppm": 40},
+            diagnosis="Gasket wear",
+            resolution="Inspect gasket",
+        )
+        await repo.insert_one(
+            user_id=1,
+            equipment_class="Circuit Breaker",
+            symptoms=[],
+            readings={},
+            diagnosis=None,
+            resolution=None,
+        )
+        assert isinstance(first, str)
+
+        rows = await repo.find_many_by_user(1)
+        assert [r["equipment_class"] for r in rows] == [
+            "Circuit Breaker",
+            "Power Transformer",
+        ]
+        assert rows[1]["symptoms"] == ["oil leak"]
+        assert rows[1]["readings"] == {"moisture_ppm": 40}
+
+    @pytest.mark.asyncio
+    async def test_reads_and_deletes_are_owner_scoped(self):
+        db = FakeMongoDB()
+        repo = FaultLogRepo(db)
+        log_id = await repo.insert_one(
+            user_id=1,
+            equipment_class="Switchgear",
+            symptoms=[],
+            readings={},
+            diagnosis="A",
+            resolution="B",
+        )
+
+        assert await repo.find_by_id_and_user(log_id, user_id=1) is not None
+        assert await repo.find_by_id_and_user(log_id, user_id=2) is None
+        assert await repo.find_many_by_user(2) == []
+        assert await repo.delete_one(log_id, user_id=2) is False
+        assert await repo.delete_one(log_id, user_id=1) is True
+        assert await repo.find_by_id_and_user(log_id, user_id=1) is None
+
+
+class TestDayFourDocuments:
+    def test_feedback_doc_stringifies_message_id(self):
+        oid = ObjectId()
+        doc = FeedbackDoc.model_validate(
+            {
+                "_id": ObjectId(),
+                "message_id": oid,
+                "user_id": 4,
+                "rating": -1,
+                "comment": None,
+            }
+        )
+        assert doc.message_id == str(oid)
+        assert doc.model_dump(mode="json")["id"]
+
+    def test_fault_log_doc_accepts_full_shape(self):
+        doc = FaultLogDoc.model_validate(
+            {
+                "_id": ObjectId(),
+                "user_id": 2,
+                "equipment_class": "Power Transformer",
+                "symptoms": ["bushing crack"],
+                "readings": {"tan_delta": 0.9},
+                "diagnosis": "Contaminated bushing",
+                "resolution": "Wash and retest",
+            }
+        )
+        dumped = doc.model_dump(mode="json")
+        assert dumped["symptoms"] == ["bushing crack"]
+        assert dumped["readings"] == {"tan_delta": 0.9}
+        assert dumped["id"]

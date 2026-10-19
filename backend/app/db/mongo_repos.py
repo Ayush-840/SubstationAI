@@ -1,6 +1,7 @@
-"""MongoDB repositories for the conversation history collections (Day 3).
+"""MongoDB repositories for the conversation history collections (Day 3)
+and the feedback / fault-log collections (Day 4).
 
-Shape of the mirrored documents (see TRD §3.1):
+Shape of the documents (see TRD §3.1):
 
 * ``conversations`` — ``{_id, sql_id, user_id, title, mode, equipment,
   created_at, updated_at}`` — header only, so the history list stays a cheap
@@ -8,6 +9,12 @@ Shape of the mirrored documents (see TRD §3.1):
 * ``messages`` — ``{_id, conversation_id, sql_id, role, content, intent,
   entities, citations[], confidence, created_at}`` — citations are embedded
   because they are always read with the message and never queried alone.
+* ``feedback`` — ``{_id, message_id, user_id, rating, comment, created_at}``
+  — ``message_id`` is the ObjectId of ``messages._id`` so a ``$lookup`` join
+  type-matches.
+* ``fault_logs`` — ``{_id, user_id, equipment_class, symptoms[],
+  readings{}, diagnosis, resolution, logged_at}`` — fault diagnoses were
+  never mirrored into SQLite, so this collection *is* the system of record.
 
 Two conventions keep the mirror safe:
 
@@ -250,3 +257,168 @@ class MessageRepo:
             return 0
         result = await self._coll.delete_many({"conversation_id": conv_oid})
         return result.deleted_count
+
+
+class FeedbackRepo:
+    """Upsert-style CRUD over the ``feedback`` collection (Day 4).
+
+    One vote per (message, user): re-rating replaces the previous document
+    instead of adding a row.
+    """
+
+    COLLECTION = "feedback"
+
+    def __init__(self, db: AsyncIOMotorDatabase) -> None:
+        self._db = db
+        self._coll = db[self.COLLECTION]
+
+    async def _message_object_id(self, message_id: Any) -> ObjectId | None:
+        """Resolve a message id to the mirrored ``messages._id``.
+
+        The API keeps handing out SQLite message ids, so an int (or digit
+        string) is resolved through ``sql_id``; anything else is treated as
+        an ObjectId that already exists in the collection. Returns ``None``
+        when a SQLite id has no mirrored document (Mongo behind, or the id is
+        unknown), and raises ``InvalidId`` for values that are neither.
+        """
+        if _is_sql_ref(message_id):
+            doc = await self._db[MessageRepo.COLLECTION].find_one(
+                {"sql_id": int(message_id)}
+            )
+            if doc is None:
+                return None
+            return to_object_id(doc["_id"])
+        return to_object_id(message_id)
+
+    @staticmethod
+    def _serialise(doc: dict[str, Any]) -> dict[str, Any]:
+        out = dict(doc)
+        out["_id"] = str(out["_id"])
+        if out.get("message_id") is not None:
+            out["message_id"] = str(out["message_id"])
+        return out
+
+    async def upsert_one(
+        self,
+        message_id: Any,
+        user_id: int,
+        rating: int,
+        comment: str | None = None,
+    ) -> dict[str, Any]:
+        """Store the (message, user) vote, replacing any earlier one.
+
+        Raises ``MessageNotFound`` when the message has no mirrored document,
+        so a vote can never land on a dangling ``message_id``.
+        """
+        msg_oid = await self._message_object_id(message_id)
+        if msg_oid is None:
+            raise MessageNotFound(
+                f"message {message_id!r} is not mirrored in MongoDB"
+            )
+        now = _utcnow()
+        await self._coll.update_one(
+            {"message_id": msg_oid, "user_id": user_id},
+            {
+                "$set": {
+                    "message_id": msg_oid,
+                    "user_id": user_id,
+                    "rating": rating,
+                    "comment": comment,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+        stored = await self._coll.find_one(
+            {"message_id": msg_oid, "user_id": user_id}
+        )
+        return self._serialise(stored)
+
+    async def find_one(
+        self, message_id: Any, user_id: int
+    ) -> dict[str, Any] | None:
+        msg_oid = await self._message_object_id(message_id)
+        if msg_oid is None:
+            return None
+        doc = await self._coll.find_one(
+            {"message_id": msg_oid, "user_id": user_id}
+        )
+        return self._serialise(doc) if doc else None
+
+    async def find_many_by_message(
+        self, message_id: Any
+    ) -> list[dict[str, Any]]:
+        msg_oid = await self._message_object_id(message_id)
+        if msg_oid is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        async for doc in self._coll.find({"message_id": msg_oid}):
+            rows.append(self._serialise(doc))
+        rows.sort(key=lambda r: _as_utc(r.get("created_at")))
+        return rows
+
+
+class FaultLogRepo:
+    """CRUD over the ``fault_logs`` collection (Day 4).
+
+    Unlike the chat mirror there is no SQLite counterpart: diagnoses only
+    ever land here, so reads and deletes are owner-scoped like everything
+    else that carries ``user_id``.
+    """
+
+    COLLECTION = "fault_logs"
+
+    def __init__(self, db: AsyncIOMotorDatabase) -> None:
+        self._db = db
+        self._coll = db[self.COLLECTION]
+
+    async def insert_one(
+        self,
+        user_id: int,
+        equipment_class: str,
+        symptoms: list[str],
+        readings: dict[str, Any],
+        diagnosis: str | None,
+        resolution: str | None,
+    ) -> str:
+        doc: dict[str, Any] = {
+            "user_id": user_id,
+            "equipment_class": equipment_class,
+            "symptoms": list(symptoms or []),
+            "readings": dict(readings or {}),
+            "diagnosis": diagnosis,
+            "resolution": resolution,
+            "logged_at": _utcnow(),
+        }
+        result = await self._coll.insert_one(doc)
+        return str(result.inserted_id)
+
+    async def find_many_by_user(
+        self, user_id: int, limit: int = 50, sort_desc: bool = True
+    ) -> list[dict[str, Any]]:
+        cursor = self._coll.find({"user_id": user_id})
+        rows: list[dict[str, Any]] = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            rows.append(doc)
+        rows.sort(key=lambda r: _as_utc(r.get("logged_at")), reverse=sort_desc)
+        if limit:
+            rows = rows[:limit]
+        return rows
+
+    async def find_by_id_and_user(
+        self, log_id: Any, user_id: int
+    ) -> dict[str, Any] | None:
+        doc = await self._coll.find_one(
+            {"_id": to_object_id(log_id), "user_id": user_id}
+        )
+        if doc is None:
+            return None
+        doc["_id"] = str(doc["_id"])
+        return doc
+
+    async def delete_one(self, log_id: Any, user_id: int) -> bool:
+        result = await self._coll.delete_one(
+            {"_id": to_object_id(log_id), "user_id": user_id}
+        )
+        return result.deleted_count == 1

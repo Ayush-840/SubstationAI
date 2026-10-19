@@ -70,7 +70,9 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         await db.conversations.create_index([("user_id", 1), ("created_at", -1)])
         await db.messages.create_index("sql_id")
         await db.messages.create_index("conversation_id")
-        await db.feedback.create_index([("message_id", 1), ("user_id", 1)])
+        await db.feedback.create_index(
+            [("message_id", 1), ("user_id", 1)], unique=True
+        )
         await db.fault_logs.create_index([("user_id", 1), ("logged_at", -1)])
     except Exception as exc:
         logger.warning("Could not create MongoDB indexes: %s", exc)

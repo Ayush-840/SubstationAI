@@ -433,3 +433,65 @@ def test_history_reads_from_mongo(client, user_headers, fake_mongo):
         client.get(f"/api/chat/conversations/{cid}", headers=user_headers).status_code
         == 404
     )
+
+
+# --- Day 4 A: fault-diagnosis storage moved to MongoDB -----------------------
+
+
+def test_diagnosis_writes_fault_log_to_mongo(client, user_headers, fake_mongo):
+    """POST /api/diagnosis stores the run in fault_logs (no SQLite table)."""
+    r = client.post(
+        "/api/diagnosis",
+        headers=user_headers,
+        json={
+            "equipment_class_id": 1,
+            "symptoms": "moisture, high dew point",
+            "readings": {"dew_point_c": -10},
+        },
+    )
+    assert r.status_code == 200 and r.json()["causes"]
+
+    logs = fake_mongo.documents("fault_logs")
+    assert len(logs) == 1
+    log = logs[0]
+    assert isinstance(log["_id"], ObjectId)
+    assert isinstance(log["user_id"], int)
+    assert log["equipment_class"]  # human-readable class name, not the id
+    assert log["symptoms"] == ["moisture", "high dew point"]
+    assert log["readings"] == {"dew_point_c": -10}
+    assert log["diagnosis"] and log["resolution"]
+    assert log["logged_at"] is not None
+
+
+def test_fault_logs_endpoint_returns_history(client, user_headers, fake_mongo):
+    client.post(
+        "/api/diagnosis",
+        headers=user_headers,
+        json={"equipment_class_id": 1, "symptoms": "overheating"},
+    )
+    r = client.get("/api/fault-logs", headers=user_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert isinstance(body[0]["id"], str)  # Mongo _id, stringified
+    assert body[0]["symptoms"] == ["overheating"]
+    assert body[0]["logged_at"]
+
+
+def test_fault_logs_are_scoped_to_the_owner(
+    client, user_headers, admin_headers, fake_mongo
+):
+    for headers in (user_headers, admin_headers):
+        client.post(
+            "/api/diagnosis",
+            headers=headers,
+            json={"equipment_class_id": 1, "symptoms": "overheating"},
+        )
+    mine = client.get("/api/fault-logs", headers=user_headers).json()
+    assert len(mine) == 1
+
+
+def test_fault_logs_empty_without_mongo(client, user_headers):
+    """Mongo down: the history endpoint degrades to an empty list."""
+    r = client.get("/api/fault-logs", headers=user_headers)
+    assert r.status_code == 200 and r.json() == []

@@ -226,4 +226,9 @@ class AnalyticsResponse(BaseModel):
     unanswered_queries: List[Dict[str, Any]]
 
 
-from app.schemas.mongo import ConversationDoc, MessageDoc  # noqa: E402,F401
+from app.schemas.mongo import (  # noqa: E402,F401
+    ConversationDoc,
+    MessageDoc,
+    FeedbackDoc,
+    FaultLogDoc,
+)

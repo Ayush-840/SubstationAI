@@ -1,4 +1,4 @@
-"""Pydantic models for the MongoDB documents (Day 3).
+"""Pydantic models for the MongoDB documents (Days 3-4).
 
 The repositories return raw Motor dictionaries; these models are the validated
 view the API layer serializes. ``id`` is exposed under its normal field name
@@ -17,7 +17,9 @@ class MongoDoc(BaseModel):
 
     id: str = Field(alias="_id")
 
-    @field_validator("id", "conversation_id", mode="before", check_fields=False)
+    @field_validator(
+        "id", "conversation_id", "message_id", mode="before", check_fields=False
+    )
     @classmethod
     def _object_id_to_str(cls, value: Any) -> Any:
         return str(value) if value is not None else value
@@ -56,3 +58,25 @@ class MessageDoc(MongoDoc):
     @property
     def public_id(self) -> int | str:
         return self.sql_id if self.sql_id is not None else self.id
+
+
+class FeedbackDoc(MongoDoc):
+    """``feedback`` collection — one vote per (message, user)."""
+
+    message_id: str
+    user_id: int
+    rating: int
+    comment: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class FaultLogDoc(MongoDoc):
+    """``fault_logs`` collection — diagnosis history, no SQLite counterpart."""
+
+    user_id: int
+    equipment_class: str
+    symptoms: list[str] = Field(default_factory=list)
+    readings: dict[str, Any] = Field(default_factory=dict)
+    diagnosis: Optional[str] = None
+    resolution: Optional[str] = None
+    logged_at: Optional[datetime] = None

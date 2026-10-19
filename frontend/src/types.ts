@@ -41,7 +41,7 @@ export interface ChatResult {
 }
 
 export interface ConversationSummary {
-  id: string
+  id: number | string
   title?: string
   mode: string
   created_at?: string | Date
@@ -49,12 +49,12 @@ export interface ConversationSummary {
 }
 
 export interface ConversationDetail {
-  id: string
+  id: number | string
   title?: string
   mode: string
   created_at?: string | Date
   messages: {
-    id: string
+    id: number | string
     role: 'user' | 'assistant'
     content: string
     intent: string | null

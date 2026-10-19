@@ -21,8 +21,8 @@ export default function ResultChecker() {
   useEffect(() => {
     if (!selectedEquip) { setTests([]); return }
     api
-      .get<TestSummary[]>(`/api/catalog/tests?equipment=${encodeURIComponent(selectedEquip)}`)
-      .then((res) => setTests(Array.isArray(res) ? res : res.data ?? res))
+      .get<TestSummary[] | { data: TestSummary[] }>(`/api/catalog/tests?equipment=${encodeURIComponent(selectedEquip)}`)
+      .then((res) => setTests(Array.isArray(res) ? res : res.data ?? []))
       .catch(() => {})
   }, [selectedEquip])
 

@@ -24,7 +24,7 @@ from app.main import app  # noqa: E402
 from app.db.session import engine, Base, SessionLocal  # noqa: E402
 from app.catalog.loader import load_catalog_to_db, register_sample_documents  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.db.models import User, UserRole  # noqa: E402
+from app.db.models import User, UserRole, Feedback  # noqa: E402
 from app.db.mongo import get_mongo  # noqa: E402
 from tests.mongo_fakes import FakeMongoDB  # noqa: E402
 
@@ -495,3 +495,119 @@ def test_fault_logs_empty_without_mongo(client, user_headers):
     """Mongo down: the history endpoint degrades to an empty list."""
     r = client.get("/api/fault-logs", headers=user_headers)
     assert r.status_code == 200 and r.json() == []
+
+
+# --- Day 4 B: POST /messages/{id}/feedback backed by MongoDB -----------------
+
+
+def _feedback_row(message_id: int, user_id: int):
+    """(rating, comment) of one vote in the SQLite mirror, or None."""
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(Feedback)
+            .filter(
+                Feedback.message_id == message_id,
+                Feedback.user_id == user_id,
+            )
+            .first()
+        )
+        return None if row is None else (row.rating, row.comment)
+    finally:
+        db.close()
+
+
+def test_feedback_upserts_to_mongo_and_mirrors_sql(
+    client, user_headers, fake_mongo
+):
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "Contact resistance limits?"}
+    ).json()
+    mid = created["message_id"]
+    message_oid = next(
+        m["_id"] for m in fake_mongo.documents("messages") if m["sql_id"] == mid
+    )
+
+    r = client.post(
+        f"/api/messages/{mid}/feedback",
+        headers=user_headers,
+        json={"rating": 1, "comment": "clear"},
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+    votes = fake_mongo.documents("feedback")
+    assert len(votes) == 1
+    # message_id is the message's ObjectId, so a $lookup on messages._id matches
+    assert votes[0]["message_id"] == message_oid
+    assert votes[0]["rating"] == 1 and votes[0]["comment"] == "clear"
+    uid = votes[0]["user_id"]
+    assert _feedback_row(mid, uid) == (1, "clear")
+
+    # a second vote replaces the first in both stores
+    r = client.post(
+        f"/api/messages/{mid}/feedback",
+        headers=user_headers,
+        json={"rating": -1, "comment": "wrong"},
+    )
+    assert r.status_code == 200
+    votes = fake_mongo.documents("feedback")
+    assert len(votes) == 1 and votes[0]["rating"] == -1
+    assert _feedback_row(mid, uid) == (-1, "wrong")
+
+
+def test_feedback_without_mongo_falls_back_to_sql(client, user_headers):
+    """Mongo down: the vote still lands in SQLite and stays idempotent."""
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "SFRA limits"}
+    ).json()
+    mid = created["message_id"]
+    uid = client.get("/api/auth/me", headers=user_headers).json()["id"]
+
+    r = client.post(
+        f"/api/messages/{mid}/feedback", headers=user_headers, json={"rating": -1}
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "message_id": mid}
+    assert _feedback_row(mid, uid) == (-1, None)
+
+    client.post(
+        f"/api/messages/{mid}/feedback",
+        headers=user_headers,
+        json={"rating": 1, "comment": "ok"},
+    )
+    assert _feedback_row(mid, uid) == (1, "ok")
+
+
+def test_feedback_legacy_body_shape(client, user_headers, fake_mongo):
+    """POST /api/feedback keeps its body-in-message_id contract."""
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "Buchholz relay"}
+    ).json()
+    r = client.post(
+        "/api/feedback",
+        headers=user_headers,
+        json={"message_id": created["message_id"], "rating": 1, "comment": "nice"},
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert len(fake_mongo.documents("feedback")) == 1
+
+
+def test_feedback_rejects_unknown_and_invalid_message_ids(
+    client, user_headers, fake_mongo
+):
+    # a well-formed ObjectId with no mirrored message is a 404, never a
+    # dangling vote document
+    r = client.post(
+        f"/api/messages/{ObjectId()}/feedback",
+        headers=user_headers,
+        json={"rating": 1},
+    )
+    assert r.status_code == 404
+    # garbage ids are rejected instead of being stored as plain strings
+    r = client.post(
+        "/api/messages/not-an-id/feedback",
+        headers=user_headers,
+        json={"rating": 1},
+    )
+    assert r.status_code == 400
+    assert fake_mongo.documents("feedback") == []

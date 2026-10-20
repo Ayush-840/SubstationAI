@@ -189,6 +189,13 @@ class FeedbackRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class FeedbackBody(BaseModel):
+    """Body of POST /messages/{id}/feedback — the id travels in the path."""
+
+    rating: int
+    comment: Optional[str] = None
+
+
 class QuizGenerateRequest(BaseModel):
     topic: str
     count: int = 5

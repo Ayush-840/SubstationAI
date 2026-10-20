@@ -273,22 +273,23 @@ class FeedbackRepo:
         self._coll = db[self.COLLECTION]
 
     async def _message_object_id(self, message_id: Any) -> ObjectId | None:
-        """Resolve a message id to the mirrored ``messages._id``.
+        """Resolve a message id to an existing mirrored ``messages._id``.
 
         The API keeps handing out SQLite message ids, so an int (or digit
-        string) is resolved through ``sql_id``; anything else is treated as
-        an ObjectId that already exists in the collection. Returns ``None``
-        when a SQLite id has no mirrored document (Mongo behind, or the id is
-        unknown), and raises ``InvalidId`` for values that are neither.
+        string) is resolved through ``sql_id``; anything else is treated as an
+        ObjectId. Both shapes are verified against the ``messages`` collection
+        so a vote can never land on a dangling reference. Returns ``None``
+        when there is no mirrored document (Mongo behind, or the id is
+        unknown) and raises ``InvalidId`` for values that are neither.
         """
         if _is_sql_ref(message_id):
-            doc = await self._db[MessageRepo.COLLECTION].find_one(
-                {"sql_id": int(message_id)}
-            )
-            if doc is None:
-                return None
-            return to_object_id(doc["_id"])
-        return to_object_id(message_id)
+            flt: dict[str, Any] = {"sql_id": int(message_id)}
+        else:
+            flt: dict[str, Any] = {"_id": to_object_id(message_id)}
+        doc = await self._db[MessageRepo.COLLECTION].find_one(flt)
+        if doc is None:
+            return None
+        return to_object_id(doc["_id"])
 
     @staticmethod
     def _serialise(doc: dict[str, Any]) -> dict[str, Any]:

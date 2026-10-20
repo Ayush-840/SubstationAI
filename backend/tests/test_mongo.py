@@ -579,3 +579,90 @@ class TestDayFourDocuments:
         assert dumped["symptoms"] == ["bushing crack"]
         assert dumped["readings"] == {"tan_delta": 0.9}
         assert dumped["id"]
+
+
+# --- Day 5 B: repository regression coverage ---------------------------------
+
+import asyncio  # noqa: E402
+
+
+class TestRepositoryRegressions:
+    @pytest.mark.asyncio
+    async def test_upsert_rejects_unmirrored_objectid_message(self):
+        """A raw ObjectId is verified against `messages`, never trusted.
+
+        Regression: an id that already looks like an ObjectId used to skip
+        the existence check, letting a vote reference a message that was
+        never mirrored (dangling $lookup row).
+        """
+        db = FakeMongoDB()
+        repo = FeedbackRepo(db)
+        with pytest.raises(MessageNotFound):
+            await repo.upsert_one(ObjectId(), user_id=1, rating=1)
+        assert db.documents("feedback") == []
+
+    @pytest.mark.asyncio
+    async def test_feedback_votes_are_isolated_per_user(self):
+        db = FakeMongoDB()
+        await ConversationRepo(db).insert_one(
+            user_id=1, title="T", mode="qa", sql_id=11
+        )
+        await MessageRepo(db).insert_one(11, "assistant", "answer", sql_id=101)
+        repo = FeedbackRepo(db)
+        await repo.upsert_one(101, user_id=1, rating=1)
+        await repo.upsert_one(101, user_id=2, rating=-1)
+
+        mine = await repo.find_one(101, user_id=1)
+        theirs = await repo.find_one(101, user_id=2)
+        assert mine["rating"] == 1 and theirs["rating"] == -1
+        assert await repo.find_one(101, user_id=99) is None
+        assert len(db.documents("feedback")) == 2
+        assert len(await repo.find_many_by_message(101)) == 2
+
+    @pytest.mark.asyncio
+    async def test_find_by_sql_id_returns_none_when_absent(self):
+        db = FakeMongoDB()
+        await ConversationRepo(db).insert_one(
+            user_id=1, title="T", mode="qa", sql_id=1
+        )
+        repo = MessageRepo(db)
+        assert await repo.find_by_sql_id(77) is None
+        await repo.insert_one(1, "user", "hi", sql_id=77)
+        found = await repo.find_by_sql_id(77)
+        assert found is not None and found["content"] == "hi"
+
+    @pytest.mark.asyncio
+    async def test_conversation_list_sorts_desc_and_limits(self):
+        db = FakeMongoDB()
+        repo = ConversationRepo(db)
+        for i in range(3):
+            await asyncio.sleep(0.001)  # deterministic created_at ordering
+            await repo.insert_one(user_id=1, title=f"T{i}", mode="qa", sql_id=100 + i)
+        await repo.insert_one(user_id=2, title="Other", mode="qa", sql_id=999)
+
+        rows = await repo.find_many_by_user(1, limit=2, sort_desc=True)
+        assert [r["title"] for r in rows] == ["T2", "T1"]
+        rows = await repo.find_many_by_user(1, limit=0, sort_desc=False)
+        assert [r["title"] for r in rows] == ["T0", "T1", "T2"]
+        assert [r["title"] for r in await repo.find_many_by_user(2, limit=0)] == [
+            "Other"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_fault_log_list_sorts_desc_and_limits(self):
+        db = FakeMongoDB()
+        repo = FaultLogRepo(db)
+        for i in range(3):
+            await asyncio.sleep(0.001)
+            await repo.insert_one(
+                user_id=1,
+                equipment_class=f"E{i}",
+                symptoms=[],
+                readings={},
+                diagnosis=None,
+                resolution=None,
+            )
+        rows = await repo.find_many_by_user(1, limit=2, sort_desc=True)
+        assert [r["equipment_class"] for r in rows] == ["E2", "E1"]
+        rows = await repo.find_many_by_user(1, limit=0, sort_desc=False)
+        assert [r["equipment_class"] for r in rows] == ["E0", "E1", "E2"]

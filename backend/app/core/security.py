@@ -73,3 +73,25 @@ async def get_current_admin(current_user: User = Depends(get_current_user)) -> U
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+
+def require_role(*allowed: UserRole):
+    """Dependency factory: only the listed roles may call the endpoint (Day 7 B).
+
+    Usage::
+
+        @router.post("/diagnosis")
+        async def diagnosis(
+            current_user: User = Depends(
+                require_role(UserRole.ENGINEER, UserRole.ADMIN)
+            ),
+        ): ...
+    """
+
+    async def checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed:
+            roles = " or ".join(r.value for r in allowed)
+            raise HTTPException(status_code=403, detail=f"{roles} role required")
+        return current_user
+
+    return checker

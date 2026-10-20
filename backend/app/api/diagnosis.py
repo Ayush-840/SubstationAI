@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.db.mongo import get_mongo
 from app.db.mongo_repos import FaultLogRepo
-from app.db.models import User, EquipmentClass, Troubleshooting
-from app.core.security import get_current_user
+from app.db.models import User, UserRole, EquipmentClass, Troubleshooting
+from app.core.security import get_current_user, require_role
 from app.schemas import (
     DiagnosisRequest,
     DiagnosisResponse,
@@ -58,7 +58,9 @@ async def _log_fault_to_mongo(
 @router.post("/diagnosis", response_model=DiagnosisResponse)
 async def diagnosis(
     request: DiagnosisRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_role(UserRole.ENGINEER, UserRole.ADMIN)
+    ),
     db: Session = Depends(get_db),
     mongo_db=Depends(get_mongo),
 ):

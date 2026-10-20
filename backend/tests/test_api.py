@@ -52,6 +52,14 @@ def setup_db():
                 role=UserRole.ADMIN,
             )
         )
+        db.add(
+            User(
+                name="Test Engineer",
+                email="e@test.dev",
+                password_hash=get_password_hash("pass1234"),
+                role=UserRole.ENGINEER,
+            )
+        )
         db.commit()
         load_catalog_to_db(db)
         register_sample_documents(db)
@@ -101,6 +109,11 @@ def user_headers(client):
 @pytest.fixture(scope="module")
 def admin_headers(client):
     return _login(client, "a@test.dev")
+
+
+@pytest.fixture(scope="module")
+def engineer_headers(client):
+    return _login(client, "e@test.dev")
 
 
 def test_health(client):
@@ -202,10 +215,10 @@ def test_chat_bypass_refused(client, user_headers):
     assert "can't help" in d["answer"].lower()
 
 
-def test_diagnosis(client, user_headers):
+def test_diagnosis(client, engineer_headers):
     r = client.post(
         "/api/diagnosis",
-        headers=user_headers,
+        headers=engineer_headers,
         json={"equipment_class_id": 1, "symptoms": "moisture high dew point"},
     )
     assert r.status_code == 200 and r.json()["causes"]
@@ -440,11 +453,11 @@ def test_history_reads_from_mongo(client, user_headers, fake_mongo):
 # --- Day 4 A: fault-diagnosis storage moved to MongoDB -----------------------
 
 
-def test_diagnosis_writes_fault_log_to_mongo(client, user_headers, fake_mongo):
+def test_diagnosis_writes_fault_log_to_mongo(client, engineer_headers, fake_mongo):
     """POST /api/diagnosis stores the run in fault_logs (no SQLite table)."""
     r = client.post(
         "/api/diagnosis",
-        headers=user_headers,
+        headers=engineer_headers,
         json={
             "equipment_class_id": 1,
             "symptoms": "moisture, high dew point",
@@ -465,13 +478,13 @@ def test_diagnosis_writes_fault_log_to_mongo(client, user_headers, fake_mongo):
     assert log["logged_at"] is not None
 
 
-def test_fault_logs_endpoint_returns_history(client, user_headers, fake_mongo):
+def test_fault_logs_endpoint_returns_history(client, engineer_headers, fake_mongo):
     client.post(
         "/api/diagnosis",
-        headers=user_headers,
+        headers=engineer_headers,
         json={"equipment_class_id": 1, "symptoms": "overheating"},
     )
-    r = client.get("/api/fault-logs", headers=user_headers)
+    r = client.get("/api/fault-logs", headers=engineer_headers)
     assert r.status_code == 200
     body = r.json()
     assert len(body) == 1
@@ -481,15 +494,15 @@ def test_fault_logs_endpoint_returns_history(client, user_headers, fake_mongo):
 
 
 def test_fault_logs_are_scoped_to_the_owner(
-    client, user_headers, admin_headers, fake_mongo
+    client, engineer_headers, admin_headers, fake_mongo
 ):
-    for headers in (user_headers, admin_headers):
+    for headers in (engineer_headers, admin_headers):
         client.post(
             "/api/diagnosis",
             headers=headers,
             json={"equipment_class_id": 1, "symptoms": "overheating"},
         )
-    mine = client.get("/api/fault-logs", headers=user_headers).json()
+    mine = client.get("/api/fault-logs", headers=engineer_headers).json()
     assert len(mine) == 1
 
 
@@ -848,3 +861,152 @@ def test_engineer_demo_user_created_by_seed_and_idempotent(client):
         assert db.query(User).filter(User.email == "engineer@substationiq.dev").count() == 1
     finally:
         db.close()
+
+
+# --- Day 7 B: role gating + ownership checks ---------------------------------
+
+
+def test_diagnosis_requires_engineer_or_admin(
+    client, user_headers, engineer_headers, admin_headers
+):
+    payload = {"equipment_class_id": 1, "symptoms": "moisture high dew point"}
+
+    assert (
+        client.post("/api/diagnosis", headers=user_headers, json=payload).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/diagnosis", headers=engineer_headers, json=payload
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/api/diagnosis", headers=admin_headers, json=payload).status_code
+        == 200
+    )
+    # the sprint's /api/v1 tree mounts the same router and is gated too
+    assert (
+        client.post(
+            "/api/v1/api/diagnosis", headers=user_headers, json=payload
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/v1/api/diagnosis", headers=engineer_headers, json=payload
+        ).status_code
+        == 200
+    )
+
+
+def _register_and_login(client, email: str) -> dict:
+    r = client.post(
+        "/api/auth/register",
+        json={"name": "Intruder", "email": email, "password": "pass1234"},
+    )
+    assert r.status_code == 200
+    return _login(client, email)
+
+
+def test_conversation_ownership_blocks_other_users(client, user_headers):
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "SFRA test on transformer"}
+    ).json()
+    cid = created["conversation_id"]
+    other = _register_and_login(client, "other7@test.dev")
+
+    assert (
+        client.get(f"/api/chat/conversations/{cid}", headers=other).status_code
+        == 404
+    )
+    assert (
+        client.delete(f"/api/chat/conversations/{cid}", headers=other).status_code
+        == 404
+    )
+    lst = client.get("/api/chat/conversations", headers=other).json()
+    assert all(c["id"] != cid for c in lst)
+
+
+def test_feedback_on_foreign_message_is_404(client, user_headers):
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "Tan delta limits?"}
+    ).json()
+    detail = client.get(
+        f"/api/chat/conversations/{created['conversation_id']}", headers=user_headers
+    ).json()
+    own_msg = next(m["id"] for m in detail["messages"] if m["role"] == "user")
+    other = _register_and_login(client, "otherfb@test.dev")
+
+    # SQL store: someone else's message is indistinguishable from a missing one
+    r = client.post(
+        f"/api/messages/{own_msg}/feedback", headers=other, json={"rating": 1}
+    )
+    assert r.status_code == 404
+    r = client.post(
+        "/api/feedback", headers=other, json={"message_id": own_msg, "rating": 1}
+    )
+    assert r.status_code == 404
+
+    # the owner's vote still lands
+    r = client.post(
+        f"/api/messages/{own_msg}/feedback", headers=user_headers, json={"rating": 1}
+    )
+    assert r.status_code == 200
+
+
+def test_feedback_on_foreign_message_is_404_with_mongo(
+    client, user_headers, fake_mongo
+):
+    created = client.post(
+        "/api/chat", headers=user_headers, json={"message": "DGA gas ratios?"}
+    ).json()
+    detail = client.get(
+        f"/api/chat/conversations/{created['conversation_id']}", headers=user_headers
+    ).json()
+    own_msg = next(m["id"] for m in detail["messages"] if m["role"] == "user")
+    other = _register_and_login(client, "otherfb2@test.dev")
+
+    r = client.post(
+        f"/api/messages/{own_msg}/feedback", headers=other, json={"rating": 1}
+    )
+    assert r.status_code == 404
+    assert fake_mongo.documents("feedback") == []  # nothing written for the intruder
+
+    r = client.post(
+        f"/api/messages/{own_msg}/feedback", headers=user_headers, json={"rating": 1}
+    )
+    assert r.status_code == 200
+    assert len(fake_mongo.documents("feedback")) == 1
+
+
+def test_procedure_run_ownership_blocks_other_users(client, user_headers):
+    tests = client.get(
+        "/api/catalog/tests",
+        params={"equipment": "Power Transformer"},
+        headers=user_headers,
+    ).json()
+    run = client.post(
+        "/api/procedures/start",
+        headers=user_headers,
+        json={"test_id": tests[0]["id"]},
+    ).json()
+    other = _register_and_login(client, "otherproc@test.dev")
+
+    r = client.put(
+        f"/api/procedures/{run['id']}/step",
+        headers=other,
+        json={"step_no": 1, "done": True},
+    )
+    assert r.status_code == 404
+    assert (
+        client.get(f"/api/procedures/{run['id']}/export", headers=other).status_code
+        == 404
+    )
+    # the owner still controls the run
+    r = client.put(
+        f"/api/procedures/{run['id']}/step",
+        headers=user_headers,
+        json={"step_no": 1, "done": True},
+    )
+    assert r.status_code == 200

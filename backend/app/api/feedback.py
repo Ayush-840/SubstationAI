@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.db.mongo import get_mongo
 from app.db.mongo_repos import FeedbackRepo, MessageNotFound
-from app.db.models import User, Message, Feedback
+from app.db.models import User, Message, Conversation, Feedback
 from app.core.security import get_current_user
 from app.schemas import FeedbackBody, FeedbackRequest
 
@@ -27,6 +27,17 @@ logger = logging.getLogger(__name__)
 def _message_exists_in_sql(db: Session, message_id: int) -> bool:
     return (
         db.query(Message.id).filter(Message.id == message_id).first() is not None
+    )
+
+
+def _message_owned_in_sql(db: Session, message_id: int, user_id: int) -> bool:
+    """The message must sit in a conversation of the caller (Day 7 B)."""
+    return (
+        db.query(Message.id)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .filter(Message.id == message_id, Conversation.user_id == user_id)
+        .first()
+        is not None
     )
 
 
@@ -71,6 +82,13 @@ async def _submit_feedback(
     mongo_db,
 ) -> dict:
     sql_id = int(message_id) if str(message_id).isdigit() else None
+
+    # Day 7 B: a vote only lands on the caller's own messages — same
+    # conversation ownership rule as reads/deletes of the conversation.
+    if sql_id is not None and not _message_owned_in_sql(
+        db, sql_id, current_user.id
+    ):
+        raise HTTPException(404, "Message not found")
 
     if mongo_db is not None:
         try:

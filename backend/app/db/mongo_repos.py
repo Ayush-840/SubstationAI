@@ -272,23 +272,35 @@ class FeedbackRepo:
         self._db = db
         self._coll = db[self.COLLECTION]
 
-    async def _message_object_id(self, message_id: Any) -> ObjectId | None:
+    async def _message_object_id(
+        self, message_id: Any, owner_id: int | None = None
+    ) -> ObjectId | None:
         """Resolve a message id to an existing mirrored ``messages._id``.
 
         The API keeps handing out SQLite message ids, so an int (or digit
-        string) is resolved through ``sql_id``; anything else is treated as an
-        ObjectId. Both shapes are verified against the ``messages`` collection
-        so a vote can never land on a dangling reference. Returns ``None``
-        when there is no mirrored document (Mongo behind, or the id is
-        unknown) and raises ``InvalidId`` for values that are neither.
+        string) is resolved through ``sql_id``; anything else is treated as
+        an ObjectId. Both shapes are verified against the ``messages``
+        collection so a vote can never land on a dangling reference. When
+        ``owner_id`` is given (Day 7 B), the message's conversation must
+        belong to that user — otherwise it resolves to ``None`` and the vote
+        is refused with a 404 rather than written onto someone else's
+        message. Returns ``None`` when there is no mirrored document (Mongo
+        behind, or the id is unknown) and raises ``InvalidId`` for values
+        that are neither.
         """
         if _is_sql_ref(message_id):
             flt: dict[str, Any] = {"sql_id": int(message_id)}
         else:
-            flt: dict[str, Any] = {"_id": to_object_id(message_id)}
+            flt = {"_id": to_object_id(message_id)}
         doc = await self._db[MessageRepo.COLLECTION].find_one(flt)
         if doc is None:
             return None
+        if owner_id is not None:
+            conv = await self._db[ConversationRepo.COLLECTION].find_one(
+                {"_id": doc.get("conversation_id")}
+            )
+            if conv is None or conv.get("user_id") != owner_id:
+                return None
         return to_object_id(doc["_id"])
 
     @staticmethod
@@ -308,10 +320,11 @@ class FeedbackRepo:
     ) -> dict[str, Any]:
         """Store the (message, user) vote, replacing any earlier one.
 
-        Raises ``MessageNotFound`` when the message has no mirrored document,
-        so a vote can never land on a dangling ``message_id``.
+        Raises ``MessageNotFound`` when the message has no mirrored document
+        or belongs to another user's conversation (Day 7 B), so a vote can
+        never land on a dangling reference nor on someone else's message.
         """
-        msg_oid = await self._message_object_id(message_id)
+        msg_oid = await self._message_object_id(message_id, owner_id=user_id)
         if msg_oid is None:
             raise MessageNotFound(
                 f"message {message_id!r} is not mirrored in MongoDB"

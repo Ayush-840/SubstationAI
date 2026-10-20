@@ -482,18 +482,23 @@ class TestFeedbackRepo:
         assert await repo.find_many_by_message(999) == []
 
     @pytest.mark.asyncio
-    async def test_find_many_by_message_returns_all_votes(self):
+    async def test_find_many_by_message_returns_owner_votes_only(self):
+        """Day 7 B: only the conversation owner can vote on a message, so a
+        message aggregates exactly one vote — theirs."""
         db = FakeMongoDB()
         await ConversationRepo(db).insert_one(
             user_id=1, title="T", mode="qa", sql_id=11
         )
         await MessageRepo(db).insert_one(11, "assistant", "answer", sql_id=101)
         repo = FeedbackRepo(db)
+
         await repo.upsert_one(101, user_id=1, rating=1)
-        await repo.upsert_one(101, user_id=2, rating=-1)
+        with pytest.raises(MessageNotFound):
+            await repo.upsert_one(101, user_id=2, rating=-1)
 
         rows = await repo.find_many_by_message(101)
-        assert {r["user_id"] for r in rows} == {1, 2}
+        assert {r["user_id"] for r in rows} == {1}
+        assert len(db.documents("feedback")) == 1
 
 
 class TestFaultLogRepo:
@@ -603,21 +608,28 @@ class TestRepositoryRegressions:
 
     @pytest.mark.asyncio
     async def test_feedback_votes_are_isolated_per_user(self):
+        """Day 7 B: each user votes inside their own conversations only."""
         db = FakeMongoDB()
         await ConversationRepo(db).insert_one(
             user_id=1, title="T", mode="qa", sql_id=11
         )
+        await ConversationRepo(db).insert_one(
+            user_id=2, title="U", mode="qa", sql_id=12
+        )
         await MessageRepo(db).insert_one(11, "assistant", "answer", sql_id=101)
+        await MessageRepo(db).insert_one(12, "assistant", "other", sql_id=102)
         repo = FeedbackRepo(db)
         await repo.upsert_one(101, user_id=1, rating=1)
-        await repo.upsert_one(101, user_id=2, rating=-1)
+        await repo.upsert_one(102, user_id=2, rating=-1)
+        with pytest.raises(MessageNotFound):
+            await repo.upsert_one(101, user_id=2, rating=-1)  # foreign message
 
         mine = await repo.find_one(101, user_id=1)
-        theirs = await repo.find_one(101, user_id=2)
+        theirs = await repo.find_one(102, user_id=2)
         assert mine["rating"] == 1 and theirs["rating"] == -1
         assert await repo.find_one(101, user_id=99) is None
         assert len(db.documents("feedback")) == 2
-        assert len(await repo.find_many_by_message(101)) == 2
+        assert len(await repo.find_many_by_message(101)) == 1
 
     @pytest.mark.asyncio
     async def test_find_by_sql_id_returns_none_when_absent(self):

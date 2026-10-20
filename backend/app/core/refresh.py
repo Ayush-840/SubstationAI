@@ -81,6 +81,38 @@ def rotate_refresh_token(db: Session, row: RefreshToken) -> str:
     return raw
 
 
+def revoke_by_raw(db: Session, raw: str) -> bool:
+    """Revoke one token (logout); ``False`` when no active row matched."""
+    row = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == hash_token(raw))
+        .first()
+    )
+    if row is None or row.revoked_at is not None:
+        return False
+    row.revoked_at = datetime.utcnow()
+    db.commit()
+    return True
+
+
+def revoke_all_for_user(db: Session, user_id: int) -> int:
+    """Revoke every still-active token for the user (full logout)."""
+    count = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.used_at.is_(None),
+        )
+        .update(
+            {RefreshToken.revoked_at: datetime.utcnow()},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return int(count)
+
+
 def set_auth_cookies(response: Response, raw_refresh: str) -> None:
     """Deliver the browser flow: HttpOnly refresh + readable CSRF pair."""
     max_age = settings.REFRESH_EXPIRE_DAYS * 86400

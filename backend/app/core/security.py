@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from uuid import uuid4
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.db.models import User, UserRole
 from app.core.config import get_settings
+from app.core.denylist import is_revoked
 
 settings = get_settings()
 
@@ -28,6 +30,9 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
         expires_delta or timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
+    # jti identifies this issuance so /auth/logout can deny-list exactly this
+    # token; setdefault lets callers supply their own id.
+    to_encode.setdefault("jti", uuid4().hex)
     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -48,6 +53,13 @@ async def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> User:
     payload = decode_token(token)
+    jti = payload.get("jti")
+    if jti and is_revoked(jti):
+        raise HTTPException(
+            status_code=401,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid token")

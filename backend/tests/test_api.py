@@ -732,3 +732,86 @@ def test_cookie_refresh_flow_requires_csrf(client):
     finally:
         client.cookies.delete("refresh_token")
         client.cookies.delete("csrf_token")
+
+
+# --- Day 6 B: logout revocation ------------------------------------------------
+
+
+def _login_pair(client) -> tuple[str, str]:
+    r = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
+    assert r.status_code == 200
+    d = r.json()
+    return d["access_token"], d["refresh_token"]
+
+
+def test_logout_revokes_refresh_and_denylists_access_jti(client):
+    access, refresh_tok = _login_pair(client)
+    auth = {"Authorization": f"Bearer {access}"}
+
+    # the access token is live before logout
+    assert client.get("/api/auth/me", headers=auth).status_code == 200
+
+    r = client.post(
+        "/api/auth/logout", headers=auth, json={"refresh_token": refresh_tok}
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True and r.json()["revoked_refresh_tokens"] == 1
+
+    # the access token dies at once: signature and expiry are fine, the jti
+    # is deny-listed
+    me = client.get("/api/auth/me", headers=auth)
+    assert me.status_code == 401
+    assert "revoked" in me.json()["detail"].lower()
+
+    # the refresh token is revoked in SQLite
+    ref = client.post("/api/auth/refresh", json={"refresh_token": refresh_tok})
+    assert ref.status_code == 401
+    assert "revoked" in ref.json()["detail"].lower()
+
+    # idempotent: a second logout with the already-denied token still succeeds
+    again = client.post(
+        "/api/auth/logout", headers=auth, json={"refresh_token": refresh_tok}
+    )
+    assert again.status_code == 200
+    assert again.json()["revoked_refresh_tokens"] == 0
+
+
+def test_logout_without_token_revokes_every_session(client):
+    access1, refresh1 = _login_pair(client)
+    _, refresh2 = _login_pair(client)  # second device/session, same user
+
+    r = client.post(
+        "/api/auth/logout",
+        headers={"Authorization": f"Bearer {access1}"},
+        json={},
+    )
+    assert r.status_code == 200
+    assert r.json()["revoked_refresh_tokens"] >= 2
+
+    for raw in (refresh1, refresh2):
+        ref = client.post("/api/auth/refresh", json={"refresh_token": raw})
+        assert ref.status_code == 401
+        assert "revoked" in ref.json()["detail"].lower()
+
+
+def test_logout_cookie_flow_requires_csrf(client):
+    access, refresh_tok = _login_pair(client)
+    auth = {"Authorization": f"Bearer {access}"}
+    try:
+        client.cookies.delete("refresh_token")
+        client.cookies.delete("csrf_token")
+        client.cookies.set("refresh_token", refresh_tok)
+        client.cookies.set("csrf_token", "logout-csrf")
+
+        # cookie without the double-submit header is rejected...
+        denied = client.post("/api/auth/logout", headers=auth)
+        assert denied.status_code == 403
+
+        # ...with the header the session is killed
+        ok = client.post("/api/auth/logout", headers={**auth, "X-CSRF-Token": "logout-csrf"})
+        assert ok.status_code == 200
+        assert ok.json()["revoked_refresh_tokens"] == 1
+        assert client.get("/api/auth/me", headers=auth).status_code == 401
+    finally:
+        client.cookies.delete("refresh_token")
+        client.cookies.delete("csrf_token")

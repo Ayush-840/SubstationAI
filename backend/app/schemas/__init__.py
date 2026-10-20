@@ -27,6 +27,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """Body of POST /api/auth/logout — omit to revoke every refresh token."""
+
+    refresh_token: Optional[str] = None
+
+
 class UserCreate(BaseModel):
     name: str
     email: EmailStr

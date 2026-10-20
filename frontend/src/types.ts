@@ -87,6 +87,16 @@ export interface DiagnosisCause {
   sources: Citation[]
 }
 
+export interface FaultLog {
+  id: string
+  equipment_class: string
+  symptoms: string[]
+  readings: Record<string, unknown>
+  diagnosis: string | null
+  resolution: string | null
+  logged_at: string | null
+}
+
 export interface DocumentInfo {
   id: number
   title: string

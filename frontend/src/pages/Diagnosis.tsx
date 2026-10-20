@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { DiagnosisCause, EquipmentClass, TestSummary } from '../types'
+import type { DiagnosisCause, EquipmentClass, FaultLog, TestSummary } from '../types'
 
 interface CheckResponse {
   status: string
@@ -33,6 +33,7 @@ function DiagnoseForm() {
   const [readings, setReadings] = useState('')
   const [causes, setCauses] = useState<DiagnosisCause[] | null>(null)
   const [error, setError] = useState('')
+  const [historyKey, setHistoryKey] = useState(0)
 
   useEffect(() => {
     api.get<EquipmentClass[]>('/api/catalog/equipment').then(setEquipment).catch(() => {})
@@ -50,6 +51,8 @@ function DiagnoseForm() {
         readings: readings ? { free_text: readings } : undefined,
       })
       setCauses(res.causes)
+      // the run was logged to fault_logs — refresh the history below
+      setHistoryKey((k) => k + 1)
     } catch (err: any) {
       setError(err.message)
     }
@@ -103,6 +106,78 @@ function DiagnoseForm() {
           </p>
         </div>
       )}
+
+      <FaultLogHistory refreshKey={historyKey} />
+    </div>
+  )
+}
+
+/** Past diagnoses from the fault_logs collection (MongoDB). */
+function FaultLogHistory({ refreshKey }: { refreshKey: number }) {
+  const [logs, setLogs] = useState<FaultLog[] | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<FaultLog[]>('/api/fault-logs')
+      .then((res) => {
+        if (!cancelled) {
+          setLogs(Array.isArray(res) ? res : [])
+          setError('')
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setLogs([])
+          setError(err.message ?? 'Failed to load history.')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshKey])
+
+  return (
+    <div className="space-y-2">
+      <h3 className="font-medium">Recent diagnoses</h3>
+      {logs === null && <p className="text-sm text-muted">Loading history…</p>}
+      {error && <p className="text-sm text-danger" role="alert">{error}</p>}
+      {logs !== null && logs.length === 0 && !error && (
+        <p className="text-sm text-muted">No diagnoses logged yet.</p>
+      )}
+      {logs?.map((log) => (
+        <div key={log.id} className="card space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium">{log.equipment_class}</p>
+            <span className="text-xs text-muted">
+              {log.logged_at ? new Date(log.logged_at).toLocaleString() : ''}
+            </span>
+          </div>
+          {log.symptoms.length > 0 && (
+            <p className="text-xs text-muted">Symptoms: {log.symptoms.join(', ')}</p>
+          )}
+          {Object.keys(log.readings ?? {}).length > 0 && (
+            <p className="text-xs text-muted">
+              Readings: {Object.entries(log.readings)
+                .map(([k, v]) => `${k} = ${String(v)}`)
+                .join(', ')}
+            </p>
+          )}
+          {log.diagnosis && (
+            <p className="line-clamp-2 text-xs">
+              <span className="text-muted">Causes: </span>
+              {log.diagnosis.split('\n')[0]}
+            </p>
+          )}
+          {log.resolution && (
+            <p className="line-clamp-2 text-xs">
+              <span className="text-muted">Checks: </span>
+              {log.resolution.split('\n')[0]}
+            </p>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

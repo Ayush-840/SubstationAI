@@ -92,10 +92,11 @@ export default function Chat() {
   }, [conversationId, selected, streaming])
 
   const giveFeedback = async (msg: Msg, rating: number) => {
-    if (!msg.result?.message_id) return
+    const id = msg.result?.message_id
+    if (!id) return
     try {
-      await api.post('/api/feedback', { message_id: msg.result.message_id, rating })
-      setFeedbackGiven((f) => ({ ...f, [msg.result!.message_id!]: rating }))
+      await api.post(`/api/messages/${id}/feedback`, { rating })
+      setFeedbackGiven((f) => ({ ...f, [id]: rating }))
     } catch { /* non-blocking */ }
   }
 

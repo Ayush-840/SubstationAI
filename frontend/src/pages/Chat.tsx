@@ -27,6 +27,8 @@ export default function Chat() {
   const [conversationId, setConversationId] = useState<number | null>(null)
   const [statusLine, setStatusLine] = useState('')
   const [feedbackGiven, setFeedbackGiven] = useState<Record<number, number>>({})
+  const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({})
+  const [feedbackError, setFeedbackError] = useState<Record<number, string>>({})
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -93,11 +95,20 @@ export default function Chat() {
 
   const giveFeedback = async (msg: Msg, rating: number) => {
     const id = msg.result?.message_id
-    if (!id) return
+    if (!id || feedbackBusy[id]) return
+    setFeedbackBusy((b) => ({ ...b, [id]: true }))
+    setFeedbackError((e) => ({ ...e, [id]: '' }))
     try {
       await api.post(`/api/messages/${id}/feedback`, { rating })
       setFeedbackGiven((f) => ({ ...f, [id]: rating }))
-    } catch { /* non-blocking */ }
+    } catch (err: any) {
+      setFeedbackError((e) => ({
+        ...e,
+        [id]: err.message ?? 'Your vote was not saved.',
+      }))
+    } finally {
+      setFeedbackBusy((b) => ({ ...b, [id]: false }))
+    }
   }
 
   const newChat = () => {
@@ -153,6 +164,8 @@ export default function Chat() {
                 key={i} msg={m} streaming={streaming && i === messages.length - 1}
                 statusLine={statusLine}
                 feedback={m.result?.message_id ? feedbackGiven[m.result.message_id] : undefined}
+                feedbackBusy={m.result?.message_id ? !!feedbackBusy[m.result.message_id] : false}
+                feedbackError={m.result?.message_id ? feedbackError[m.result.message_id] : undefined}
                 onFeedback={(r) => giveFeedback(m, r)}
               />
             ),
@@ -192,11 +205,13 @@ export default function Chat() {
   )
 }
 
-function AssistantMessage({ msg, streaming, statusLine, feedback, onFeedback }: {
+function AssistantMessage({ msg, streaming, statusLine, feedback, feedbackBusy, feedbackError, onFeedback }: {
   msg: Msg
   streaming: boolean
   statusLine: string
   feedback?: number
+  feedbackBusy?: boolean
+  feedbackError?: string
   onFeedback: (rating: number) => void
 }) {
   const result = msg.result
@@ -245,11 +260,19 @@ function AssistantMessage({ msg, streaming, statusLine, feedback, onFeedback }: 
           )}
 
           {result.message_id && !isGuardrail && !isNotFound && (
-            <div className="flex items-center gap-1 border-t border-brdr pt-2 text-sm">
+            <div className="flex flex-wrap items-center gap-1 border-t border-brdr pt-2 text-sm">
               <button className={`btn-secondary !min-h-[32px] !px-2 ${feedback === 1 ? '!border-success text-success' : ''}`}
-                      aria-label="Helpful" onClick={() => onFeedback(1)}>👍</button>
+                      disabled={feedbackBusy} aria-label="Helpful" aria-pressed={feedback === 1}
+                      onClick={() => onFeedback(1)}>👍</button>
               <button className={`btn-secondary !min-h-[32px] !px-2 ${feedback === -1 ? '!border-danger text-danger' : ''}`}
-                      aria-label="Not helpful" onClick={() => onFeedback(-1)}>👎</button>
+                      disabled={feedbackBusy} aria-label="Not helpful" aria-pressed={feedback === -1}
+                      onClick={() => onFeedback(-1)}>👎</button>
+              {feedbackBusy && <span className="text-xs text-muted">Saving…</span>}
+              {feedbackError && (
+                <span className="text-xs text-danger" role="alert">
+                  {feedbackError} — tap again to retry.
+                </span>
+              )}
             </div>
           )}
         </>

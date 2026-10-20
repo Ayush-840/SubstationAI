@@ -17,10 +17,13 @@ export default function History() {
   const [open, setOpen] = useState<ConversationDetail | null>(null)
   const [openLoading, setOpenLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
     setError(null)
+    setDeleteError(null)
     try {
       const res = await api.get<ConversationSummary[]>('/api/chat/conversations')
       setConversations(Array.isArray(res) ? res : [])
@@ -41,12 +44,13 @@ export default function History() {
 
   const remove = async (id: number | string) => {
     if (!confirm('Delete this conversation?')) return
+    setDeleteError(null)
     try {
       await api.del(`/api/chat/conversations/${id}`)
       setOpen(null)
       load()
-    } catch {
-      // keep UI consistent even when delete fails transiently
+    } catch (e: any) {
+      setDeleteError(e.message ?? 'Delete failed — please retry.')
     }
   }
 
@@ -91,6 +95,7 @@ export default function History() {
         <button className="btn-danger" disabled={openLoading} onClick={() => remove(open.id)}>
           {openLoading ? 'Deleting…' : 'Delete conversation'}
         </button>
+        {deleteError && <p className="text-sm text-danger" role="alert">{deleteError}</p>}
       </div>
     )
   }
@@ -102,7 +107,13 @@ export default function History() {
              value={search} onChange={(e) => setSearch(e.target.value)} />
       <div className="space-y-2">
         {loading && <p className="text-sm text-muted">Loading conversations…</p>}
-        {!loading && error && <p className="text-sm text-danger">{error}</p>}
+        {!loading && openLoading && (
+          <p className="text-sm text-muted">Opening conversation…</p>
+        )}
+        {!loading && error && <p className="text-sm text-danger" role="alert">{error}</p>}
+        {!loading && detailError && (
+          <p className="text-sm text-danger" role="alert">{detailError}</p>
+        )}
         {!loading && filtered.length === 0 && (
           <p className="text-sm text-muted">
             {conversations.length === 0
@@ -114,12 +125,13 @@ export default function History() {
           <button key={c.id} className="card flex w-full items-center justify-between text-left hover:border-primary"
                   onClick={async () => {
                     setOpenLoading(true)
+                    setDetailError(null)
                     setOpen(null)
                     try {
                       const detail = await api.get<ConversationDetail>(`/api/chat/conversations/${c.id}`)
                       setOpen(detail)
-                    } catch {
-                      setOpen(null)
+                    } catch (e: any) {
+                      setDetailError(e.message ?? 'Failed to open conversation.')
                     } finally {
                       setOpenLoading(false)
                     }

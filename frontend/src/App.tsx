@@ -22,6 +22,16 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'result-checker', label: 'Result Checker', icon: '✅' },
 ]
 
+// Day 7 C — fault diagnosis is an Engineer+ tool (POST /api/diagnosis is
+// role-gated on the backend too); everything else is open to every role.
+const ENGINEER_ONLY: Tab[] = ['diagnosis']
+
+const ROLE_LABELS: Record<string, string> = {
+  trainee: 'Trainee',
+  engineer: 'Engineer',
+  admin: 'Admin',
+}
+
 export default function App() {
   const { user, logout } = useAuth()
   const { dark, toggle } = useTheme()
@@ -29,12 +39,20 @@ export default function App() {
 
   if (!user) return <Login />
 
-  const tabs: Tab[] = user.role === 'admin'
-    ? [...TABS.map((t) => t.id), 'admin']
-    : TABS.map((t) => t.id)
+  const isEngineerPlus = user.role === 'engineer' || user.role === 'admin'
+  const allowedTabs = TABS.filter(
+    (t) => !ENGINEER_ONLY.includes(t.id) || isEngineerPlus,
+  )
+  const tabs: Tab[] = [
+    ...allowedTabs.map((t) => t.id),
+    ...(user.role === 'admin' ? ['admin' as Tab] : []),
+  ]
+  // A role change mid-session must never leave a hidden tool mounted.
+  const activeTab: Tab = tabs.includes(tab) ? tab : 'chat'
   const labels: Record<Tab, string> = Object.fromEntries(
     [...TABS, { id: 'admin' as Tab, label: 'Admin', icon: '⚙️' }].map((t) => [t.id, t.label]),
   ) as any
+  const roleLabel = ROLE_LABELS[user.role] ?? user.role
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -46,7 +64,7 @@ export default function App() {
             <button
               key={t}
               className={`flex min-h-[44px] items-center gap-2 rounded-control px-3 text-sm font-medium
-                ${tab === t ? 'bg-primary/10 text-primary' : 'hover:bg-bg hover:text-primary'}`}
+                ${activeTab === t ? 'bg-primary/10 text-primary' : 'hover:bg-bg hover:text-primary'}`}
               onClick={() => setTab(t)}
             >
               <span aria-hidden>{t === 'admin' ? '⚙️' : TABS.find((x) => x.id === t)?.icon}</span>
@@ -59,7 +77,7 @@ export default function App() {
             {dark ? '☀️ Light' : '🌙 Dark'}
           </button>
           <div className="truncate px-1 text-muted" title={user.email}>
-            {user.name} <span className="pill bg-brdr text-muted">{user.role}</span>
+            {user.name} <span className="pill bg-brdr text-muted">{roleLabel}</span>
           </div>
           <button className="btn-secondary w-full" onClick={logout}>Sign out</button>
         </div>
@@ -67,13 +85,13 @@ export default function App() {
 
       {/* Main panel */}
       <main className="min-h-0 flex-1 pb-16 md:pb-0">
-        {tab === 'chat' && <Chat />}
-        {tab === 'procedures' && <Procedures />}
-        {tab === 'diagnosis' && <Diagnosis />}
-        {tab === 'learn' && <Learn />}
-        {tab === 'history' && <History />}
-        {tab === 'result-checker' && <ResultChecker />}
-        {tab === 'admin' && <Admin />}
+        {activeTab === 'chat' && <Chat />}
+        {activeTab === 'procedures' && <Procedures />}
+        {activeTab === 'diagnosis' && <Diagnosis />}
+        {activeTab === 'learn' && <Learn />}
+        {activeTab === 'history' && <History />}
+        {activeTab === 'result-checker' && <ResultChecker />}
+        {activeTab === 'admin' && <Admin />}
       </main>
 
       {/* Mobile bottom tabs */}
@@ -82,7 +100,7 @@ export default function App() {
           <button
             key={t}
             className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]
-              ${tab === t ? 'text-primary' : 'text-muted hover:text-primary'}`}
+              ${activeTab === t ? 'text-primary' : 'text-muted hover:text-primary'}`}
             onClick={() => setTab(t)}
           >
             <span aria-hidden className="text-base">{t === 'admin' ? '⚙️' : TABS.find((x) => x.id === t)?.icon}</span>

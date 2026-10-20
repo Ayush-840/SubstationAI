@@ -83,7 +83,7 @@ Two knowledge layers work together:
 - Guided Procedure Mode with mandatory safety confirmations and PDF export.
 - Fault Diagnosis Mode: symptoms and readings leading to ranked probable causes.
 - An admin panel to upload, tag and manage documents (PDF, DOCX, TXT).
-- JWT authentication with Trainee, Engineer and Admin roles — rotated refresh tokens, `/auth/logout` revocation.
+- JWT authentication with Trainee, Engineer and Admin roles — fault diagnosis is Engineer+ (`require_role`), everyone owns their conversations, feedback and procedure runs; rotated refresh tokens, `/auth/logout` revocation.
 - **Result Checker.** Compare a measured value against the catalog limits: `within limits`, `borderline`, `outside limits`, or a qualitative criterion when the catalog carries no numeric bound.
 - Feedback, analytics and an evaluation dashboard.
 
@@ -334,7 +334,7 @@ Interactive docs at `/docs` (Swagger UI).
 | POST | `/api/chat/stream` | Streaming chat (SSE) |
 | GET | `/api/catalog/tests` | Browse structured test catalog |
 | POST | `/api/procedures/generate` | Build a checklist |
-| POST | `/api/diagnosis` | Symptom-based diagnosis |
+| POST | `/api/diagnosis` | Symptom-based diagnosis (Engineer or Admin) |
 | POST | `/api/check-result` | Compare a measured value with catalog limits |
 | POST | `/api/feedback` | Rate an answer |
 | POST | `/api/admin/documents` | Upload a document (admin) |

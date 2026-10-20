@@ -83,7 +83,8 @@ Two knowledge layers work together:
 - Guided Procedure Mode with mandatory safety confirmations and PDF export.
 - Fault Diagnosis Mode: symptoms and readings leading to ranked probable causes.
 - An admin panel to upload, tag and manage documents (PDF, DOCX, TXT).
-- JWT authentication with User and Admin roles.
+- JWT authentication with User and Admin roles — rotated refresh tokens, `/auth/logout` revocation.
+- **Result Checker.** Compare a measured value against the catalog limits: `within limits`, `borderline`, `outside limits`, or a qualitative criterion when the catalog carries no numeric bound.
 - Feedback, analytics and an evaluation dashboard.
 
 **Stretch ideas.** Hindi and English support, voice input, nameplate OCR.
@@ -150,7 +151,8 @@ React (Vite) ──HTTPS / SSE──► FastAPI
                                │    + structured test catalog lookup
                                ├─ Guardrails (safety notice, bypass refusal, injection defence)
                                ├─ ChromaDB (vectors) + BM25 index
-                               ├─ PostgreSQL / SQLite (users, chats, docs, test catalog)
+                               ├─ SQLite — source of truth (users, catalog, docs, messages)
+                               ├─ MongoDB — document store (chat-history mirror, feedback, fault logs)
                                └─ LLM provider: Gemini · Groq · Ollama (swappable)
 ```
 
@@ -168,6 +170,7 @@ Full detail lives in [docs/TRD.md](docs/TRD.md).
 | Embeddings | `BAAI/bge-small-en-v1.5` |
 | Reranker | `BAAI/bge-reranker-base` (optional) |
 | Vector DB | ChromaDB |
+| Database | SQLite (source of truth) · MongoDB 7 (document store: conversation-history mirror, feedback, fault logs) |
 | Keyword search | `rank_bm25` |
 | Parsing | PyMuPDF, pdfplumber, python-docx, pytesseract |
 | Evaluation | RAGAS / custom LLM-judge scripts |
@@ -304,7 +307,7 @@ Per-intent results: procedure 6/6 · limits 6/6 · troubleshooting 5/5 · test_e
 
 Hybrid gives the best recall. Vector retrieval misses queries whose wording drifts from the indexed text; BM25 catches exact domain terms; RRF fusion takes the union. Vector-only ranks its hits most confidently (highest MRR) but misses the most. BM25 is the fastest and, on this small corpus, more robust than vector. The shipped configuration uses hybrid plus a cross-encoder rerank.
 
-The backend test suite (34 tests) also covers the NLP layer — intent, synonyms, abbreviations, fuzzy matching, citation and number verification, guardrails — and the API — auth, chat, catalog, procedures, diagnosis, admin.
+The backend test suite also covers the NLP layer — intent, synonyms, abbreviations, fuzzy matching, citation and number verification, guardrails — and the API — auth, chat, catalog, procedures, diagnosis, admin.
 
 ## Authentication and session storage
 
@@ -317,7 +320,7 @@ Chosen strategy — **TRD Option A (cookie + double-submit CSRF)** — chosen de
 
 Tradeoff acknowledged: `SameSite=None` means the refresh cookie travels with cross-site requests, which is why the CSRF header check is mandatory rather than optional. The alternatives considered were Option B (keep the refresh token in localStorage — simpler, but a wider XSS exposure) and Option C (reverse-proxy the API under the frontend domain so `SameSite=Lax` works). If deployment ever moves to a single-origin reverse proxy, Option C is the cleaner fallback.
 
-Until the refresh endpoints ship, the access token is persisted in `localStorage` by `frontend/src/api/client.ts` — a known capstone tradeoff, replaced by the in-memory + cookie flow once `/auth/refresh` is implemented.
+`/api/auth/refresh` and `/api/auth/logout` ship in this build: the refresh token is returned in the response **body** for API clients and set as the HttpOnly cookie for browsers, rotation is enforced server-side (only its SHA-256 is stored, and a consumed token cannot be replayed), and logout additionally deny-lists the access token's `jti` until expiry. The frontend still keeps the access token in `localStorage` (`frontend/src/api/client.ts`); moving it fully in-memory is the remaining client-side step.
 
 ## API Overview
 
@@ -325,16 +328,59 @@ Interactive docs at `/docs` (Swagger UI).
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/auth/login` | Get JWT |
+| POST | `/api/auth/login` | Get access + refresh token |
+| POST | `/api/auth/refresh` | Rotate the refresh token into a new pair |
+| POST | `/api/auth/logout` | Revoke refresh token, deny-list access `jti` |
 | POST | `/api/chat/stream` | Streaming chat (SSE) |
 | GET | `/api/catalog/tests` | Browse structured test catalog |
 | POST | `/api/procedures/generate` | Build a checklist |
 | POST | `/api/diagnosis` | Symptom-based diagnosis |
+| POST | `/api/check-result` | Compare a measured value with catalog limits |
 | POST | `/api/feedback` | Rate an answer |
 | POST | `/api/admin/documents` | Upload a document (admin) |
 | GET | `/api/admin/analytics` | Usage insights (admin) |
 
 Full list in [docs/TRD.md](docs/TRD.md#6-api-specification).
+
+### Result Checker contract
+
+`POST /api/check-result`, refined against what the catalog actually contains (Days 1–5) — notably, some limits are qualitative, not numeric.
+
+**Request**
+
+```json
+{
+  "test_id": 12,
+  "parameter": "Contact resistance per pole",
+  "measured_value": 250.0,
+  "unit": "µΩ",
+  "condition_note": "New condition"
+}
+```
+
+`condition_note` is optional: one parameter can carry several rows (age band, tap range, …). When both sides carry a note the server matches them by substring; otherwise it falls back to the first row.
+
+**Response**
+
+```json
+{
+  "status": "outside limits",
+  "limit_value": "≤ 100 µΩ (New condition)",
+  "source": "Test Catalog (condition: New condition)",
+  "troubleshooting": [
+    { "symptom": "High contact resistance", "cause": "Oxidised arcing contacts", "action": "Service the interrupter" }
+  ]
+}
+```
+
+| `status` | Meaning | `troubleshooting` |
+|---|---|---|
+| `within limits` | Inside `min_val`/`max_val`, more than 10% away from either bound | empty |
+| `borderline` | Within 10% of a numeric bound | empty |
+| `outside limits` | Beyond a numeric bound | populated from the catalog's probable causes |
+| `see criterion` | The limit has no numeric bounds (e.g. *“no visible tracking on the surface”*): `limit_value` carries the criterion text and the caller compares by eye | empty |
+
+`limit_value` is `value_text + unit`; `source` names the matched condition. The server never invents a numeric verdict for a qualitative limit.
 
 ## Testing
 

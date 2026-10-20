@@ -343,4 +343,25 @@ class UnansweredQuery(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class RefreshToken(Base):
+    """Server-side refresh-token store (Day 6 A).
+
+    Only the SHA-256 of the opaque token is kept, so a leaked row cannot be
+    replayed; rotation is recorded through ``used_at`` and logout through
+    ``revoked_at``.
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
+
+
 Index("ix_chunks_embedding_id", "chunks.id")  # placeholder for vector index reference

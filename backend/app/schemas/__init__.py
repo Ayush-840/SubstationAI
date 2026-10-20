@@ -18,6 +18,13 @@ class DocumentStatus(str, Enum):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str
+
+
+class RefreshRequest(BaseModel):
+    """Body of POST /api/auth/refresh — the cookie flow needs no body."""
+
+    refresh_token: str
 
 
 class UserCreate(BaseModel):

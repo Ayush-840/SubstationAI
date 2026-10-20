@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
+    REFRESH_EXPIRE_DAYS: int = 7
 
     # ChromaDB (absolute default so the index resolves the same regardless of
     # the launch directory; docker-compose mounts ./data at /app/data)

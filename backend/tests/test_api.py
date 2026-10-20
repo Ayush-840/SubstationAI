@@ -15,6 +15,7 @@ os.environ["LLM_PROVIDER"] = "none"
 os.environ["CHROMA_PATH"] = tempfile.mkdtemp(prefix="siq_chroma_")
 
 import json  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
 
 import pytest  # noqa: E402
 from bson import ObjectId  # noqa: E402
@@ -24,7 +25,8 @@ from app.main import app  # noqa: E402
 from app.db.session import engine, Base, SessionLocal  # noqa: E402
 from app.catalog.loader import load_catalog_to_db, register_sample_documents  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.db.models import User, UserRole, Feedback  # noqa: E402
+from app.db.models import User, UserRole, Feedback, RefreshToken  # noqa: E402
+from app.core.refresh import hash_token  # noqa: E402
 from app.db.mongo import get_mongo  # noqa: E402
 from tests.mongo_fakes import FakeMongoDB  # noqa: E402
 
@@ -611,3 +613,122 @@ def test_feedback_rejects_unknown_and_invalid_message_ids(
     )
     assert r.status_code == 400
     assert fake_mongo.documents("feedback") == []
+
+
+# --- Day 6 A: refresh-token rotation -----------------------------------------
+
+
+def _login_refresh(client, email="u@test.dev") -> str:
+    r = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert r.status_code == 200
+    return r.json()["refresh_token"]
+
+
+def test_login_returns_refresh_token_and_stores_hash_only(client):
+    r = client.post(
+        "/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}
+    )
+    d = r.json()
+    assert d["access_token"] and d["refresh_token"]
+    # browser flow rides along as cookies
+    cookies = r.headers.get_list("set-cookie")
+    assert any(c.startswith("refresh_token=") for c in cookies)
+    assert any(c.startswith("csrf_token=") for c in cookies)
+
+    db = SessionLocal()
+    try:
+        by_hash = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_token(d["refresh_token"]))
+            .all()
+        )
+        assert len(by_hash) == 1
+        row = by_hash[0]
+        assert row.used_at is None and row.revoked_at is None
+        assert row.expires_at > datetime.utcnow()
+        # the raw token is never what gets persisted
+        assert db.query(RefreshToken).filter(
+            RefreshToken.token_hash == d["refresh_token"]
+        ).all() == []
+    finally:
+        db.close()
+
+
+def test_refresh_rotates_pair_and_rejects_replay(client):
+    old_refresh = _login_refresh(client)
+
+    r = client.post("/api/auth/refresh", json={"refresh_token": old_refresh})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["refresh_token"] and d["refresh_token"] != old_refresh
+    assert d["access_token"]
+
+    # rotation: the presented token is consumed...
+    replay = client.post("/api/auth/refresh", json={"refresh_token": old_refresh})
+    assert replay.status_code == 401
+    assert "used" in replay.json()["detail"].lower()
+
+    # ...and the successor works, exactly once
+    assert (
+        client.post(
+            "/api/auth/refresh", json={"refresh_token": d["refresh_token"]}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/auth/refresh", json={"refresh_token": d["refresh_token"]}
+        ).status_code
+        == 401
+    )
+
+    # unknown/garbage tokens are 401, never a crash
+    assert (
+        client.post("/api/auth/refresh", json={"refresh_token": "not-a-token"}).status_code
+        == 401
+    )
+
+
+def test_refresh_rejects_expired_token(client):
+    raw = _login_refresh(client)
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_token(raw))
+            .first()
+        )
+        assert row is not None
+        row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    assert r.status_code == 401
+    assert "expired" in r.json()["detail"].lower()
+
+
+def test_cookie_refresh_flow_requires_csrf(client):
+    """Cookie presented → double-submit header mandatory; body flow exempt."""
+    raw = _login_refresh(client)
+    try:
+        # seed the jar the way a browser would have stored it (the test
+        # transport does not replay Secure cookies over http://testserver)
+        client.cookies.delete("refresh_token")
+        client.cookies.delete("csrf_token")
+        client.cookies.set("refresh_token", raw)
+        client.cookies.set("csrf_token", "double-submit-value")
+
+        denied = client.post("/api/auth/refresh")
+        assert denied.status_code == 403
+        assert "CSRF" in denied.json()["detail"]
+
+        ok = client.post(
+            "/api/auth/refresh", headers={"X-CSRF-Token": "double-submit-value"}
+        )
+        assert ok.status_code == 200
+        assert ok.json()["refresh_token"] != raw  # still rotates
+    finally:
+        client.cookies.delete("refresh_token")
+        client.cookies.delete("csrf_token")

@@ -83,7 +83,7 @@ Two knowledge layers work together:
 - Guided Procedure Mode with mandatory safety confirmations and PDF export.
 - Fault Diagnosis Mode: symptoms and readings leading to ranked probable causes.
 - An admin panel to upload, tag and manage documents (PDF, DOCX, TXT).
-- JWT authentication with User and Admin roles — rotated refresh tokens, `/auth/logout` revocation.
+- JWT authentication with Trainee, Engineer and Admin roles — rotated refresh tokens, `/auth/logout` revocation.
 - **Result Checker.** Compare a measured value against the catalog limits: `within limits`, `borderline`, `outside limits`, or a qualitative criterion when the catalog carries no numeric bound.
 - Feedback, analytics and an evaluation dashboard.
 
@@ -129,7 +129,7 @@ _Numeric limits always come from the cited source or the verified test catalog. 
 |---|---|
 | Live app | _add link_
 | Demo video | _add link_
-| Demo login | `demo@substationiq.dev` / `demo1234` (User) · `admin@substationiq.dev` / `admin1234` (Admin) |
+| Demo login | `demo@substationiq.dev` / `demo1234` (Trainee) · `engineer@substationiq.dev` / `engineer1234` (Engineer) · `admin@substationiq.dev` / `admin1234` (Admin) |
 
 ```
 ![Chat](docs/screenshots/chat.png)

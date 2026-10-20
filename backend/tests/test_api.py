@@ -41,7 +41,7 @@ def setup_db():
                 name="Test User",
                 email="u@test.dev",
                 password_hash=get_password_hash("pass1234"),
-                role=UserRole.USER,
+                role=UserRole.TRAINEE,
             )
         )
         db.add(
@@ -121,7 +121,7 @@ def test_register_and_login(client):
 
 def test_me(client, user_headers):
     r = client.get("/api/auth/me", headers=user_headers)
-    assert r.status_code == 200 and r.json()["role"] == "user"
+    assert r.status_code == 200 and r.json()["role"] == "trainee"
 
 
 def test_admin_required(client, user_headers):
@@ -815,3 +815,36 @@ def test_logout_cookie_flow_requires_csrf(client):
     finally:
         client.cookies.delete("refresh_token")
         client.cookies.delete("csrf_token")
+
+
+# --- Day 7 A: three-role model ------------------------------------------------
+
+
+def test_register_defaults_to_trainee_role(client):
+    r = client.post(
+        "/api/auth/register",
+        json={"name": "New Trainee", "email": "t7@test.dev", "password": "pass1234"},
+    )
+    assert r.status_code == 200
+    assert r.json()["role"] == "trainee"
+
+
+def test_engineer_demo_user_created_by_seed_and_idempotent(client):
+    from app.scripts.seed import ensure_demo_users
+
+    db = SessionLocal()
+    try:
+        ensure_demo_users(db)
+        ensure_demo_users(db)  # re-running must not duplicate or fail
+        eng = (
+            db.query(User)
+            .filter(User.email == "engineer@substationiq.dev")
+            .first()
+        )
+        assert eng is not None
+        assert eng.role == UserRole.ENGINEER
+        # pre-existing test users are untouched by the seed helper
+        assert db.query(User).filter(User.email == "u@test.dev").count() == 1
+        assert db.query(User).filter(User.email == "engineer@substationiq.dev").count() == 1
+    finally:
+        db.close()

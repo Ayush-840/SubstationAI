@@ -19,7 +19,8 @@ from app.db.session import Base
 
 
 class UserRole(str, enum.Enum):
-    USER = "user"
+    TRAINEE = "trainee"
+    ENGINEER = "engineer"
     ADMIN = "admin"
 
 
@@ -42,7 +43,7 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(SQLEnum(UserRole), default=UserRole.USER, nullable=False)
+    role = Column(SQLEnum(UserRole), default=UserRole.TRAINEE, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user")

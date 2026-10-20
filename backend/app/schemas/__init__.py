@@ -3,10 +3,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
-
-class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
+# Single source of truth for roles (Day 7): the ORM enum and the API schema
+# used to declare separate USER/ADMIN enums that silently drifted apart.
+from app.db.models import UserRole  # noqa: E402
 
 
 class DocumentStatus(str, Enum):

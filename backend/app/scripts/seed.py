@@ -15,29 +15,38 @@ from app.catalog.loader import (
     validate_catalog,
 )  # noqa: E402
 from app.db.models import User, UserRole  # noqa: E402
+from app.db.migrate import migrate_user_roles  # noqa: E402
+
+# Demo users (README credentials). Roles follow the Day-7 three-role model.
+DEMO_USERS = [
+    ("Demo User", "demo@substationiq.dev", "demo1234", UserRole.TRAINEE),
+    ("Demo Engineer", "engineer@substationiq.dev", "engineer1234", UserRole.ENGINEER),
+    ("Demo Admin", "admin@substationiq.dev", "admin1234", UserRole.ADMIN),
+]
+
+
+def ensure_demo_users(db) -> None:
+    """Insert any missing demo account; never touches existing rows."""
+    for name, email, password, role in DEMO_USERS:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            db.add(
+                User(
+                    name=name,
+                    email=email,
+                    password_hash=get_password_hash(password),
+                    role=role,
+                )
+            )
+    db.commit()
 
 
 def seed() -> None:
     Base.metadata.create_all(bind=engine)
+    migrate_user_roles(engine)
     db = SessionLocal()
     try:
-        # Demo users (README credentials)
-        demo_users = [
-            ("Demo User", "demo@substationiq.dev", "demo1234", UserRole.USER),
-            ("Demo Admin", "admin@substationiq.dev", "admin1234", UserRole.ADMIN),
-        ]
-        for name, email, password, role in demo_users:
-            user = db.query(User).filter(User.email == email).first()
-            if not user:
-                db.add(
-                    User(
-                        name=name,
-                        email=email,
-                        password_hash=get_password_hash(password),
-                        role=role,
-                    )
-                )
-        db.commit()
+        ensure_demo_users(db)
 
         # Catalog + synonyms + sample documents
         load_catalog_to_db(db)
@@ -56,7 +65,9 @@ def seed() -> None:
             f"Seed complete: {equips} equipment classes, {tests} tests, {limits} limits"
         )
         print(
-            "Users: demo@substationiq.dev / demo1234  |  admin@substationiq.dev / admin1234"
+            "Users: demo@substationiq.dev / demo1234 (trainee)"
+            "  |  engineer@substationiq.dev / engineer1234 (engineer)"
+            "  |  admin@substationiq.dev / admin1234 (admin)"
         )
     finally:
         db.close()

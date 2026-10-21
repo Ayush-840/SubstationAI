@@ -45,9 +45,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import os
+
+# Allow the configured FRONTEND_URL plus any Vercel preview deployment.
+_cors_origins = [settings.FRONTEND_URL]
+_vercel_url = os.environ.get("VERCEL_URL", "")
+if _vercel_url:
+    _cors_origins.append(f"https://{_vercel_url}")
+# Also allow the *.vercel.app wildcard for preview deployments.
+_cors_origins.append("https://*.vercel.app")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

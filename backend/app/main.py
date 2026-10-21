@@ -10,6 +10,17 @@ from app.db.mongo import get_mongo, close_mongo, ensure_indexes
 
 settings = get_settings()
 
+# Configure logging at startup so all loggers output to stdout (Render collects
+# stdout/stderr). Without this, loggers created via getLogger() inherit the
+# default root config which has no handlers in the Docker container.
+import logging
+from app.core.logging import logger
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+
 # During the sprint both trees stay mounted: the legacy /api/... paths the
 # frontend and the eval harness already call, and the /api/v1 tree the sprint
 # is migrating to (TRD §3.5 — old paths keep working until Day 10).

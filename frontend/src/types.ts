@@ -21,6 +21,39 @@ export interface TestSummary {
   summary: string | null
 }
 
+export interface TestListItem extends TestSummary {
+  equipment_class: string
+  standard_code?: string
+  status?: 'draft' | 'verified' | 'archived'
+}
+
+export interface TestDetail {
+  id: number
+  name: string
+  aliases: string[]
+  category: string | null
+  purpose: string | null
+  summary: string | null
+  equipment_class: string
+  standard_code?: string
+  status?: 'draft' | 'verified' | 'archived'
+  steps: { step_no: number; type: string; text: string }[]
+  equipment: { instrument: string; spec: string }[]
+  limits: {
+    parameter: string
+    value: string
+    min?: number
+    max?: number
+    unit: string
+    condition: string
+  }[]
+  standards: { code: string; title: string; clause?: string }[]
+  safety: { text: string; mandatory: boolean }[]
+  troubleshooting?: { cause: string; action: string }[]
+  verified_by?: string
+  verified_at?: string
+}
+
 export interface Citation {
   document: string
   page: number | string

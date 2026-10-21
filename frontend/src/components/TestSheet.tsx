@@ -20,6 +20,7 @@ export interface TestSheetProps {
   feedbackBusy?: boolean
   feedbackError?: string
   streaming?: boolean
+  onSelectSource?: (source: CitationItem) => void
 }
 
 const SECTION_ORDER = [
@@ -132,6 +133,7 @@ export function TestSheet({
   feedbackBusy,
   feedbackError,
   streaming = false,
+  onSelectSource,
 }: TestSheetProps) {
   const isGuardrail = sourceType === 'guardrail'
   const isNotFound = sourceType === 'not_found'
@@ -328,7 +330,7 @@ export function TestSheet({
 
         {/* Sources List */}
         {citations && citations.length > 0 && (
-          <SourcesList sources={citations} />
+          <SourcesList sources={citations} onSelectSource={onSelectSource} />
         )}
 
         {/* Action Row */}

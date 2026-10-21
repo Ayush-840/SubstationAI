@@ -1,32 +1,18 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { DiagnosisCause, EquipmentClass, FaultLog, TestSummary } from '../types'
-
-interface CheckResponse {
-  status: string
-  limit_value: string
-  source: string
-  troubleshooting: { symptom: string; cause: string; action: string }[]
-}
+import type { DiagnosisCause, EquipmentClass, FaultLog } from '../types'
+import {
+  SectionLabel,
+  EquipmentFilter,
+  type EquipmentCategory,
+  Button,
+  Field,
+  Input,
+  Select,
+  Wordmark,
+} from '../components/common'
 
 export default function Diagnosis() {
-  const [tab, setTab] = useState<'diagnose' | 'check'>('diagnose')
-  return (
-    <div className="mx-auto max-w-3xl space-y-4 p-4">
-      <div className="flex gap-2">
-        <button className={`chip ${tab === 'diagnose' ? 'chip-selected' : ''}`} onClick={() => setTab('diagnose')}>
-          Fault Diagnosis
-        </button>
-        <button className={`chip ${tab === 'check' ? 'chip-selected' : ''}`} onClick={() => setTab('check')}>
-          Result Checker
-        </button>
-      </div>
-      {tab === 'diagnose' ? <DiagnoseForm /> : <ResultChecker />}
-    </div>
-  )
-}
-
-function DiagnoseForm() {
   const [equipment, setEquipment] = useState<EquipmentClass[]>([])
   const [equipId, setEquipId] = useState<number | null>(null)
   const [symptoms, setSymptoms] = useState('')
@@ -51,7 +37,6 @@ function DiagnoseForm() {
         readings: readings ? { free_text: readings } : undefined,
       })
       setCauses(res.causes)
-      // the run was logged to fault_logs — refresh the history below
       setHistoryKey((k) => k + 1)
     } catch (err: any) {
       setError(err.message)
@@ -59,55 +44,99 @@ function DiagnoseForm() {
   }
 
   return (
-    <div className="space-y-4">
-      <form onSubmit={submit} className="card space-y-3">
-        <h2 className="font-semibold">Describe the fault</h2>
-        <select className="input" value={equipId ?? ''} onChange={(e) => setEquipId(Number(e.target.value) || null)} required>
-          <option value="">Select equipment…</option>
-          {equipment.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
-        <textarea className="input" rows={3} placeholder="Symptoms (e.g. leakage current high, oil temperature rising…)"
-                  value={symptoms} onChange={(e) => setSymptoms(e.target.value)} required />
-        <textarea className="input" rows={2} placeholder="Optional readings (e.g. H2 = 145 ppm, tan delta = 1.9%)"
-                  value={readings} onChange={(e) => setReadings(e.target.value)} />
-        <button className="btn-primary">Diagnose</button>
+    <div style={{ maxWidth: '760px', margin: '0', width: '100%' }}>
+      <header style={{ marginBottom: '24px' }}>
+        <h1 style={{
+          margin: '0 0 8px',
+          fontSize: '28px',
+          fontWeight: 600,
+          color: 'var(--ink)',
+          fontFamily: 'var(--font-display)',
+        }}>
+          Fault Diagnosis
+        </h1>
+        <p style={{ margin: 0, color: 'var(--muted)', fontSize: '15px' }}>
+          Describe symptoms and optional readings to get ranked probable causes with recommended checks.
+        </p>
+      </header>
+
+      <SectionLabel topRule={false}>Describe the Fault</SectionLabel>
+      <form onSubmit={submit} style={{ border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--surface)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <Field label="Equipment Class" required>
+          <Select defaultValue={String(equipId || '')}>
+            <option value="">Select equipment…</option>
+            {equipment.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </Select>
+        </Field>
+
+        <Field label="Symptoms" required hint="e.g. leakage current high, oil temperature rising, abnormal DGA">
+          <textarea
+            className="input resize-none"
+            rows={3}
+            placeholder="Describe the observed symptoms…"
+            value={symptoms}
+            onChange={(e) => setSymptoms(e.target.value)}
+            required
+          />
+        </Field>
+
+        <Field label="Optional Readings" hint="e.g. H2 = 145 ppm, tan delta = 1.9%, C2H2 = 12 ppm">
+          <textarea
+            className="input resize-none"
+            rows={2}
+            placeholder="Any test readings or measurements…"
+            value={readings}
+            onChange={(e) => setReadings(e.target.value)}
+          />
+        </Field>
+
+        <Button variant="primary" type="submit" style={{ width: 'fit-content' }}>
+          Diagnose
+        </Button>
       </form>
 
-      {error && <p className="text-sm text-danger" role="alert">{error}</p>}
+      {error && <p style={{ marginTop: '16px', color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
 
       {causes && (
-        <div className="space-y-2">
-          <h3 className="font-medium">Ranked probable causes</h3>
-          {causes.length === 0 && <p className="text-sm text-muted">No matching causes found in the catalog.</p>}
+        <div style={{ marginTop: '24px' }}>
+          <SectionLabel>Ranked Probable Causes</SectionLabel>
+          {causes.length === 0 && (
+            <p style={{ color: 'var(--muted)', fontSize: '14px' }}>No matching causes found in the catalog.</p>
+          )}
           {causes.map((c, i) => (
-            <div key={i} className="card space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-medium">{c.cause}</p>
-                <span className="text-primary" style={{ fontSize: '12px' }}>
+            <div key={i} style={{ border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--surface)', padding: '16px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <p style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--ink)' }}>{c.cause}</p>
+                <span style={{ fontSize: '12px', color: 'var(--primary)', fontFamily: 'var(--font-data)' }}>
                   likelihood {Math.round(c.likelihood * 100)}%
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--rule)' }}>
-                <div className="h-full bg-primary" style={{ width: `${c.likelihood * 100}%` }} />
+              <div style={{ height: '4px', background: 'var(--rule)', borderRadius: 0, marginBottom: '12px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${c.likelihood * 100}%`, background: 'var(--primary)', transition: 'width 200ms ease' }} />
               </div>
               <div>
-                <p className="text-xs font-medium text-muted">Recommended checks</p>
-                <ul className="list-inside list-disc text-sm">
+                <p style={{ margin: '0 0 8px', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)' }}>
+                  Recommended Checks
+                </p>
+                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '14px', color: 'var(--ink)', lineHeight: 1.6 }}>
                   {c.recommended_checks.map((r, j) => <li key={j}>{r}</li>)}
                 </ul>
               </div>
-              <p className="text-xs text-muted">
+              <p style={{ marginTop: '12px', fontSize: '12px', color: 'var(--muted)' }}>
                 Sources: {c.sources.map((s) => `${s.document} · ${s.section}`).join(' | ')}
               </p>
             </div>
           ))}
-          <p className="text-xs text-muted">
+          <p style={{ marginTop: '16px', fontSize: '12px', color: 'var(--muted)' }}>
             Diagnosis is an aid based on catalog records and sample logs — confirm with a senior engineer.
           </p>
         </div>
       )}
 
-      <FaultLogHistory refreshKey={historyKey} />
+      <div style={{ marginTop: '32px' }}>
+        <SectionLabel>Recent Diagnoses</SectionLabel>
+        <FaultLogHistory refreshKey={historyKey} />
+      </div>
     </div>
   )
 }
@@ -139,123 +168,46 @@ function FaultLogHistory({ refreshKey }: { refreshKey: number }) {
   }, [refreshKey])
 
   return (
-    <div className="space-y-2">
-      <h3 className="font-medium">Recent diagnoses</h3>
-      {logs === null && <p className="text-sm text-muted">Loading history…</p>}
-      {error && <p className="text-sm text-danger" role="alert">{error}</p>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {logs === null && <p style={{ color: 'var(--muted)', fontSize: '14px' }}>Loading history…</p>}
+      {error && <p style={{ color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
       {logs !== null && logs.length === 0 && !error && (
-        <p className="text-sm text-muted">No diagnoses logged yet.</p>
+        <p style={{ color: 'var(--muted)', fontSize: '14px' }}>No diagnoses logged yet.</p>
       )}
       {logs?.map((log) => (
-        <div key={log.id} className="card space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium">{log.equipment_class}</p>
-            <span className="text-xs text-muted">
+        <div key={log.id} style={{ border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--surface)', padding: '12px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+            <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: 'var(--ink)' }}>{log.equipment_class}</p>
+            <span style={{ fontSize: '12px', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
               {log.logged_at ? new Date(log.logged_at).toLocaleString() : ''}
             </span>
           </div>
           {log.symptoms.length > 0 && (
-            <p className="text-xs text-muted">Symptoms: {log.symptoms.join(', ')}</p>
+            <p style={{ margin: '8px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+              Symptoms: {log.symptoms.join(', ')}
+            </p>
           )}
           {Object.keys(log.readings ?? {}).length > 0 && (
-            <p className="text-xs text-muted">
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
               Readings: {Object.entries(log.readings)
                 .map(([k, v]) => `${k} = ${String(v)}`)
                 .join(', ')}
             </p>
           )}
           {log.diagnosis && (
-            <p className="line-clamp-2 text-xs">
-              <span className="text-muted">Causes: </span>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--ink)' }}>
+              <span style={{ color: 'var(--muted)' }}>Causes: </span>
               {log.diagnosis.split('\n')[0]}
             </p>
           )}
           {log.resolution && (
-            <p className="line-clamp-2 text-xs">
-              <span className="text-muted">Checks: </span>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--ink)' }}>
+              <span style={{ color: 'var(--muted)' }}>Checks: </span>
               {log.resolution.split('\n')[0]}
             </p>
           )}
         </div>
       ))}
     </div>
-  )
-}
-
-function ResultChecker() {
-  const [tests, setTests] = useState<TestSummary[]>([])
-  const [testId, setTestId] = useState<number | null>(null)
-  const [parameter, setParameter] = useState('')
-  const [value, setValue] = useState('')
-  const [result, setResult] = useState<CheckResponse | null>(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    api.get<TestSummary[]>('/api/catalog/tests').then(setTests).catch(() => {})
-  }, [])
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!testId) return
-    setError('')
-    setResult(null)
-    try {
-      const res = await api.post<CheckResponse>('/api/check-result', {
-        test_id: testId,
-        parameter,
-        measured_value: parseFloat(value),
-        unit: '',
-      })
-      setResult(res)
-    } catch (err: any) {
-      setError(err.message)
-    }
-  }
-
-  return (      <form onSubmit={submit} className="card space-y-3">
-        <h2 className="font-semibold">Compare a measured value with catalog limits</h2>
-        <select className="input" value={testId ?? ''} onChange={(e) => setTestId(Number(e.target.value) || null)} required>
-          <option value="">Select test…</option>
-          {tests.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-        <input className="input" placeholder="Parameter (e.g. Contact resistance per pole)"
-               value={parameter} onChange={(e) => setParameter(e.target.value)} required />
-        <input className="input" type="number" step="any" placeholder="Measured value"
-               value={value} onChange={(e) => setValue(e.target.value)} required />
-        <button className="btn-primary">Check result</button>
-
-        {error && <p className="text-sm text-danger" role="alert">{error}</p>}
-
-        {result && (
-          <div className="card space-y-2 animate-fade-up">
-            <span style={{
-              fontSize: '14px',
-              fontWeight: 500,
-              color: result.status === 'within limits' ? 'var(--success)'
-                : result.status === 'borderline' ? 'var(--warn)'
-                : result.status === 'see criterion' ? 'var(--primary)'
-                : 'var(--danger)',
-            }}>
-              {result.status}
-            </span>
-            <p className="text-sm">
-              {result.status === 'see criterion' ? 'Criterion:' : 'Limit:'}
-              {' '}<span className="font-mono">{result.limit_value}</span>
-            </p>
-            <p className="text-xs text-muted">{result.source}</p>
-            {result.troubleshooting.length > 0 && (
-              <div className="border-t border-rule pt-2">
-                <p className="text-xs font-medium text-muted">Outside limits — probable causes</p>
-                <ul className="list-inside list-disc text-sm">
-                  {result.troubleshooting.map((t, i) => (
-                    <li key={i}>{t.cause} → {t.action}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </form>
-
   )
 }

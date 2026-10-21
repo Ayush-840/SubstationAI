@@ -11,6 +11,7 @@ import {
   VerdictStamp,
   StatusText,
   EquipmentFilter,
+  type EquipmentCategory,
   Dialog,
   Toast,
   EmptyState,
@@ -18,13 +19,14 @@ import {
   Wordmark,
   TestSheet,
 } from '../components/common'
+import { useSources } from '../App'
 
 const SUGGESTED = [
-  'How do I perform an insulation resistance test on a power transformer?',
-  'What is the acceptable contact resistance for a circuit breaker?',
-  'Which instruments are needed for a tan delta test on a CT?',
-  'Leakage current is high on a surge arrester. What should I do?',
-  'Which standard covers DGA interpretation for transformers?',
+  { query: 'IR value low on 132 kV CT after rain, what next?', intent: 'Troubleshooting' },
+  { query: 'Acceptable contact resistance, 220 kV SF6 breaker', intent: 'Limits' },
+  { query: 'Instruments needed for tan delta on a CVT', intent: 'Equipment' },
+  { query: 'How do I perform an insulation resistance test on a power transformer?', intent: 'Procedure' },
+  { query: 'Which standard covers DGA interpretation for transformers?', intent: 'Standards' },
 ]
 
 interface Msg {
@@ -35,8 +37,9 @@ interface Msg {
 }
 
 export default function Chat() {
+  const { openSource } = useSources()
   const [equipment, setEquipment] = useState<EquipmentClass[]>([])
-  const [selected, setSelected] = useState<string>('')
+  const [selected, setSelected] = useState<EquipmentCategory>('all')
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -133,47 +136,83 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Equipment filter chips */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-rule px-4 py-3">
-        <button className={`chip ${selected === '' ? 'chip-selected' : ''}`} onClick={() => setSelected('')}>
-          All
-        </button>
-        {equipment.map((e) => (
-          <button key={e.id} className={`chip ${selected === e.name ? 'chip-selected' : ''}`}
-                  onClick={() => setSelected(e.name)}>
-            {e.name}
-          </button>
-        ))}
-        <div className="flex-1" />
-        <button className="btn-secondary !min-h-[36px]" onClick={newChat}>+ New chat</button>
+    <div className="flex h-full flex-col" style={{ maxWidth: '760px', margin: '0', width: '100%' }}>
+      {/* Equipment filter segmented row */}
+      <div style={{ borderBottom: '1px solid var(--rule)', padding: '12px 0 16px' }}>
+        <EquipmentFilter selected={selected} onChange={(c) => setSelected(c)} />
       </div>
 
       {/* Messages */}
       <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
         {messages.length === 0 && (
-          <div className="mx-auto max-w-2xl space-y-4 pt-8">
-            <h2 className="text-xl font-semibold">Ask about substation maintenance</h2>
-            <p className="text-sm text-muted">
-              Procedures, acceptable limits, troubleshooting, standards, safety and test equipment —
-              with citations from the knowledge base.
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
+          <div style={{ maxWidth: '760px', margin: '0', paddingTop: '48px' }}>
+            <h1 style={{
+              margin: '0 0 16px',
+              fontSize: '28px',
+              fontWeight: 600,
+              color: 'var(--ink)',
+              fontFamily: 'var(--font-display)',
+              lineHeight: 1.2,
+            }}>
+              What do you need to check?
+            </h1>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {SUGGESTED.map((s) => (
-                <button key={s} className="card text-left text-sm hover:border-primary"
-                        onClick={() => send(s)}>
-                  {s}
+                <button
+                  key={s.query}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '16px',
+                    padding: '16px',
+                    border: '1px solid var(--rule)',
+                    borderRadius: 'var(--radius)',
+                    background: 'var(--surface)',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '15px',
+                    lineHeight: 1.5,
+                    color: 'var(--ink)',
+                    fontFamily: 'var(--font-ui)',
+                    transition: 'border-color 100ms',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--primary)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--rule)' }}
+                  onClick={() => send(s.query)}
+                >
+                  <span>{s.query}</span>
+                  <span style={{
+                    fontSize: '13px',
+                    color: 'var(--muted)',
+                    fontFamily: 'var(--font-ui)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}>
+                    {s.intent}
+                  </span>
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        <div className="mx-auto max-w-3xl space-y-4">
+        <div style={{ maxWidth: '760px', margin: '0' }}>
           {messages.map((m, i) =>
         m.role === 'user' ? (
-          <div key={i} className="animate-fade-up flex justify-end">
-            <div className="max-w-[80%] rounded px-4 py-2.5 text-sm" style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>{m.content}</div>
+          <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+            <div style={{
+              maxWidth: '80%',
+              border: '1px solid var(--rule)',
+              borderRadius: 'var(--radius)',
+              padding: '10px 14px',
+              fontSize: '15px',
+              lineHeight: 1.5,
+              color: 'var(--ink)',
+              background: 'var(--surface)',
+            }}>
+              {m.content}
+            </div>
           </div>
         ) : (
           <TestSheet
@@ -195,19 +234,27 @@ export default function Chat() {
         ),
       )}
           {streaming && statusLine && (
-            <p className="text-xs text-muted">{statusLine}</p>
+            <p style={{ fontSize: '12px', color: 'var(--muted)' }}>{statusLine}</p>
           )}
         </div>
       </div>
 
-      {/* Composer */}
-      <div className="border-t border-rule p-3">
+      {/* Composer fixed at bottom */}
+      <div style={{
+        position: 'sticky',
+        bottom: 0,
+        borderTop: '1px solid var(--rule)',
+        background: 'var(--bg)',
+        padding: '12px 16px',
+        zIndex: 10,
+      }}>
         <form
-          className="mx-auto flex max-w-3xl items-end gap-2"
+          style={{ maxWidth: '760px', margin: '0 auto', display: 'flex', gap: '12px', alignItems: 'flex-end' }}
           onSubmit={(e) => { e.preventDefault(); send(input) }}
         >
           <textarea
             className="input resize-none"
+            style={{ flex: 1, minWidth: 0 }}
             rows={Math.min(4, Math.max(1, input.split('\n').length))}
             placeholder="Ask a maintenance question…"
             value={input}

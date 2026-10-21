@@ -28,6 +28,7 @@ import {
   EmptyState,
   Placeholder,
   Wordmark,
+  TestSheet,
 } from '../components/common'
 import { useTheme, type Theme } from '../hooks/useTheme'
 
@@ -232,7 +233,31 @@ export default function DevComponents() {
           <LimitsTable rows={MOCK_LIMITS} caption="Acceptable Acceptance Criteria (20 °C Baseline)" />
         </section>
 
-        {/* 5. Citations & Sources */}
+        {/* 5. Test Sheet (Phase 3) */}
+        <section>
+          <SectionLabel>5. Test Sheet (Full Structured Answer)</SectionLabel>
+          <TestSheet
+            intent="Limits"
+            equipment="Power Transformer"
+            test="Insulation Resistance & Polarisation Index"
+            sections={{
+              equipment: 'Insulation tester, 5 or 10 kV · Test leads · Temperature probe',
+              steps: '1. Disconnect all external connections from the transformer windings.\n2. Clean bushings and terminals thoroughly.\n3. Connect test leads to winding terminals and ground.\n4. Apply test voltage and record readings at 1 minute and 10 minutes.\n5. Calculate Polarization Index (10 min / 1 min).\n6. Discharge windings after test.',
+              limits: 'IR (60 s) ≥ 1000 MΩ at 20 °C IEEE C57.152 §6.2\nPI (10 min / 1 min) ≥ 1.5 — Ambient 10–40 °C IEEE C57.152 §6.2',
+              troubleshooting: 'Check bushing porcelain for moisture or surface tracking and clean thoroughly.\nPerform Karl Fischer titration oil test for moisture content in insulation paper.\nRepeat measurement after 24 hours of dry nitrogen purge if under vacuum.',
+              standards: 'IEC 60076-1 · IEEE C57.152',
+            }}
+            citations={MOCK_SOURCES}
+            confidence={0.85}
+            sourceType="catalog+rag"
+            messageId={123}
+            onFeedback={() => {}}
+            feedbackGiven={1}
+            feedbackBusy={false}
+          />
+        </section>
+
+        {/* 6. Citations & Sources */}
         <section>
           <SectionLabel>5. Citations (Superscript) & Sources List</SectionLabel>
           <p style={{ fontSize: '15px', lineHeight: 1.6, margin: '0 0 16px' }}>

@@ -14,6 +14,7 @@ export * from './EquipmentGlyphs'
 export * from './EquipmentFilter'
 export * from './Feedback'
 export * from './Wordmark'
+export * from './TestSheet'
 
 import { SafetyBlock } from './SafetyBlock'
 import { StatusText } from './StatusText'

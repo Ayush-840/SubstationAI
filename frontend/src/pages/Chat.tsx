@@ -1,7 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, streamSSE } from '../api/client'
 import type { ChatResult, Citation, ConversationDetail, EquipmentClass } from '../types'
-import { SafetyBanner, DangerBanner, ConfidenceBadge, CitationChip } from '../components/common'
+import {
+  SectionLabel,
+  SafetyBlock,
+  LimitsTable,
+  Citation,
+  SourcesList,
+  type CitationItem,
+  VerdictStamp,
+  StatusText,
+  EquipmentFilter,
+  Dialog,
+  Toast,
+  EmptyState,
+  Placeholder,
+  Wordmark,
+  TestSheet,
+} from '../components/common'
 
 const SUGGESTED = [
   'How do I perform an insulation resistance test on a power transformer?',
@@ -155,21 +171,29 @@ export default function Chat() {
 
         <div className="mx-auto max-w-3xl space-y-4">
           {messages.map((m, i) =>
-            m.role === 'user' ? (
-              <div key={i} className="animate-fade-up flex justify-end">
-                <div className="max-w-[80%] rounded px-4 py-2.5 text-sm" style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>{m.content}</div>
-              </div>
-            ) : (
-              <AssistantMessage
-                key={i} msg={m} streaming={streaming && i === messages.length - 1}
-                statusLine={statusLine}
-                feedback={m.result?.message_id ? feedbackGiven[m.result.message_id] : undefined}
-                feedbackBusy={m.result?.message_id ? !!feedbackBusy[m.result.message_id] : false}
-                feedbackError={m.result?.message_id ? feedbackError[m.result.message_id] : undefined}
-                onFeedback={(r) => giveFeedback(m, r)}
-              />
-            ),
-          )}
+        m.role === 'user' ? (
+          <div key={i} className="animate-fade-up flex justify-end">
+            <div className="max-w-[80%] rounded px-4 py-2.5 text-sm" style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>{m.content}</div>
+          </div>
+        ) : (
+          <TestSheet
+            key={i}
+            intent={m.result?.intent || ''}
+            equipment={m.result?.equipment || null}
+            test={m.result?.test || null}
+            sections={m.result?.sections || {}}
+            citations={(m.result?.citations || []) as CitationItem[]}
+            confidence={m.result?.confidence ?? 0}
+            sourceType={m.result?.source_type || 'rag'}
+            messageId={m.result?.message_id}
+            feedbackGiven={m.result?.message_id ? feedbackGiven[m.result.message_id] : undefined}
+            feedbackBusy={m.result?.message_id ? !!feedbackBusy[m.result.message_id] : false}
+            feedbackError={m.result?.message_id ? feedbackError[m.result.message_id] : undefined}
+            onFeedback={(r) => m.result?.message_id && giveFeedback(m, r)}
+            streaming={streaming && i === messages.length - 1}
+          />
+        ),
+      )}
           {streaming && statusLine && (
             <p className="text-xs text-muted">{statusLine}</p>
           )}
@@ -201,82 +225,6 @@ export default function Chat() {
           </button>
         </form>
       </div>
-    </div>
-  )
-}
-
-function AssistantMessage({ msg, streaming, statusLine, feedback, feedbackBusy, feedbackError, onFeedback }: {
-  msg: Msg
-  streaming: boolean
-  statusLine: string
-  feedback?: number
-  feedbackBusy?: boolean
-  feedbackError?: string
-  onFeedback: (rating: number) => void
-}) {
-  const result = msg.result
-  const isGuardrail = result?.source_type === 'guardrail'
-  const isNotFound = result?.source_type === 'not_found'
-  const isOOS = result?.source_type === 'out_of_scope'
-
-  return (
-    <div className="card space-y-3">
-      {result && result.sections?.safety !== undefined && !isGuardrail && !isNotFound && !isOOS && (
-        <SafetyBanner compact />
-      )}
-      {isGuardrail && <DangerBanner message={msg.content} />}
-      {isNotFound && <DangerBanner message={msg.content} />}
-
-      {result && result.source_type === 'out_of_scope' && !isGuardrail && (
-        <div className="rounded border border-rule px-4 py-3 text-sm text-muted">
-          {msg.content}
-        </div>
-      )}
-
-      {!isGuardrail && !isNotFound && (
-        <div className={`animate-fade-up whitespace-pre-wrap text-sm leading-relaxed ${streaming && !msg.content ? 'stream-caret' : ''}`}>
-          {msg.content || (streaming ? '' : '…')}
-        </div>
-      )}
-
-      {result && (
-        <>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {result.intent && <span className="text-primary font-medium">{result.intent}</span>}
-            {result.test && <span className="text-muted">{result.test}</span>}
-            <ConfidenceBadge value={result.confidence ?? 0} />
-            <span className="text-muted" style={{ fontSize: '12px' }}>{result.source_type}</span>
-          </div>
-
-          {result.citations?.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted">Sources</p>
-              <div className="flex flex-wrap gap-1.5">
-                {result.citations.map((c: Citation, i: number) => (
-                  <CitationChip key={i} n={i + 1} citation={c} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {result.message_id && !isGuardrail && !isNotFound && (
-            <div className="flex flex-wrap items-center gap-1 border-t border-rule pt-2 text-sm">
-              <button className="btn-secondary" style={{ minHeight: '32px', padding: '0 8px', color: feedback === 1 ? 'var(--success)' : undefined, borderColor: feedback === 1 ? 'var(--success)' : undefined }}
-                      disabled={feedbackBusy} aria-label="Helpful" aria-pressed={feedback === 1}
-                      onClick={() => onFeedback(1)}>Helpful</button>
-              <button className="btn-secondary" style={{ minHeight: '32px', padding: '0 8px', color: feedback === -1 ? 'var(--danger)' : undefined, borderColor: feedback === -1 ? 'var(--danger)' : undefined }}
-                      disabled={feedbackBusy} aria-label="Not helpful" aria-pressed={feedback === -1}
-                      onClick={() => onFeedback(-1)}>Not helpful</button>
-              {feedbackBusy && <span className="text-xs text-muted">Saving…</span>}
-              {feedbackError && (
-                <span className="text-xs text-danger" role="alert">
-                  {feedbackError} — tap again to retry.
-                </span>
-              )}
-            </div>
-          )}
-        </>
-      )}
     </div>
   )
 }

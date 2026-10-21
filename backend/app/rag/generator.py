@@ -32,6 +32,7 @@ class LLMGenerator:
                 self.gemini_client = genai.Client(
                     api_key=settings.GEMINI_API_KEY,
                 )
+                logger.info("Gemini client initialized with model: %s", self.gemini_model_name)
             except Exception:
                 logger.exception("Gemini init failed")
         elif self.provider == "groq" and settings.GROQ_API_KEY:

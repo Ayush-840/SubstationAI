@@ -10,8 +10,9 @@ import History from './pages/History'
 import Admin from './pages/Admin'
 import Learn from './pages/Learn'
 import ResultChecker from './pages/ResultChecker'
+import DevComponents from './pages/DevComponents'
 
-type Tab = 'chat' | 'procedures' | 'diagnosis' | 'learn' | 'history' | 'admin' | 'result-checker'
+type Tab = 'chat' | 'procedures' | 'diagnosis' | 'learn' | 'history' | 'admin' | 'result-checker' | 'dev-components'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'chat', label: 'Ask' },
@@ -53,6 +54,13 @@ export default function App() {
     ...allowedTabs.map((t) => t.id),
     ...(user.role === 'admin' ? ['admin' as Tab] : []),
   ]
+  const isDevUrl = typeof window !== 'undefined' && (
+    window.location.pathname === '/dev/components' ||
+    window.location.hash === '#/dev/components' ||
+    window.location.hash === '#dev-components'
+  )
+  const isDev = isDevUrl || tab === 'dev-components'
+
   const activeTab: Tab = tabs.includes(tab) ? tab : 'chat'
   const allTabDefs = [...TABS, { id: 'admin' as Tab, label: 'Admin' }]
   const labels: Record<Tab, string> = Object.fromEntries(
@@ -159,18 +167,37 @@ export default function App() {
             </span>
           </div>
           <button className="btn-secondary" style={{ width: '100%' }} onClick={logout}>Sign out</button>
+
+          <button
+            type="button"
+            onClick={() => setTab(isDev ? 'chat' : 'dev-components')}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: '4px 0 0',
+              fontSize: '11px',
+              color: isDev ? 'var(--primary)' : 'var(--muted)',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-data)',
+              textDecoration: isDev ? 'underline' : 'none',
+            }}
+          >
+            {isDev ? '← Back to app' : 'dev: /dev/components'}
+          </button>
         </div>
       </aside>
 
       {/* Main content area */}
-      <main className="min-h-0 flex-1" style={{ paddingBottom: 'env(safe-area-inset-bottom, 64px)' }} id="main-content">
-        {activeTab === 'chat' && <Chat />}
-        {activeTab === 'procedures' && <Procedures />}
-        {activeTab === 'diagnosis' && <Diagnosis />}
-        {activeTab === 'learn' && <Learn />}
-        {activeTab === 'history' && <History />}
-        {activeTab === 'result-checker' && <ResultChecker />}
-        {activeTab === 'admin' && <Admin />}
+      <main className="min-h-0 flex-1 overflow-y-auto" style={{ paddingBottom: 'env(safe-area-inset-bottom, 64px)' }} id="main-content">
+        {isDev && <DevComponents />}
+        {!isDev && activeTab === 'chat' && <Chat />}
+        {!isDev && activeTab === 'procedures' && <Procedures />}
+        {!isDev && activeTab === 'diagnosis' && <Diagnosis />}
+        {!isDev && activeTab === 'learn' && <Learn />}
+        {!isDev && activeTab === 'history' && <History />}
+        {!isDev && activeTab === 'result-checker' && <ResultChecker />}
+        {!isDev && activeTab === 'admin' && <Admin />}
       </main>
 
       {/* Mobile bottom bar — max 4 items, text labels always visible */}

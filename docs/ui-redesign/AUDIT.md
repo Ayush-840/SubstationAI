@@ -333,11 +333,53 @@ All counts run from `frontend/src`, excluding `styles/tokens.css` for hex:
 - [x] All old classes migrated — zero audit violations.
 - [x] Build succeeds cleanly (`npm run build` exits 0).
 
-### Next: Phase 2 — Components
+---
 
-Per `06-implementation-plan.md`, Phase 2 covers building the remaining components:
-- `SectionLabel`, `LimitsTable`, `TestSheet`, `Dialog`, `Toast`, `EmptyState`
-- Equipment filter with segmented row
-- Citation superscript + SourcesList
-- Custom equipment glyphs (SVG)
-- Verdict stamp
+## 13. Phase 2 — Core components (Complete)
+
+All Phase 2 components implemented per `03-components.md` and `06-implementation-plan.md`:
+
+### Components Built
+
+| Component | File | Description |
+|---|---|---|
+| `Button`, `Link` | [`Button.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/Button.tsx) | Primary (solid --primary, --primary-ink, 48px, 4px radius), Secondary (--ink border), Tertiary (text link), Destructive (--danger), disabled with reason. |
+| Form Controls | [`Forms.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/Forms.tsx) | `Field` (always-visible 14px label, "required" text label, inline error with icon), `Input` (48px, 2px radius, numeric mono/tabular-nums, unit suffix support), `Select`, `Checkbox` (48px interactive row). |
+| `SectionLabel` | [`SectionLabel.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/SectionLabel.tsx) | 12px uppercase, letter-spacing .08em, 1px top rule, --muted. |
+| `SafetyBlock` | [`SafetyBlock.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/SafetyBlock.tsx) | 10px hazard stripe, 2px solid --ink border, 17-18px imperative notice, caution triangle SVG, never collapsible/dismissible. |
+| `LimitsTable` | [`LimitsTable.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/LimitsTable.tsx) | Desktop typeset table (12px uppercase headers on --surface-sunken, 2px --rule-strong bottom rule, mono tabular values) + Mobile (<640px) stacked block layout with zero horizontal scroll. |
+| `Citation` | [`Citation.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/Citation.tsx) | Superscript footnote button in --primary with min 24x24 touch target and explicit aria-label. |
+| `SourcesList` & `SourcesPanel` | [`Sources.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/Sources.tsx) | Numbered source list with clickable document links; slide-out panel (desktop 420px right drawer, mobile bottom sheet) highlighting cited text in --hazard at 25% opacity. |
+| `VerdictStamp` | [`VerdictStamp.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/VerdictStamp.tsx) | 2px border semantic stamp (WITHIN LIMIT, BORDERLINE, OUTSIDE LIMIT) with icon + text + color, definition list for values/limits, and troubleshooting list. |
+| `StatusText` | [`StatusText.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/StatusText.tsx) | 8px dot + text label (Verified, Ready, Draft, Processing with progress line, Failed with reason). No background pills. |
+| `EquipmentGlyphs` | [`EquipmentGlyphs.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/EquipmentGlyphs.tsx) | Custom 24px SVG single-line diagram glyphs: All (busbar/nodes), Transformer (two coils), Reactor (inductor/core), Breaker (contacts/box), CT/CVT (toroid conductor), Surge Arrester (varistor/ground). |
+| `EquipmentFilter` | [`EquipmentFilter.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/EquipmentFilter.tsx) | Segmented row with custom glyphs and text labels. 2px bottom rule in --primary and --ink text when selected. Horizontal scroll on mobile. |
+| Feedback | [`Feedback.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/Feedback.tsx) | `Dialog` (4px radius, overlay shadow, accessible esc close), `Toast` (solid --ink bg, --bg text, 4px radius), `EmptyState` (custom line diagram mark, 1 sentence, 1 action), `Placeholder` (static bars in --surface-sunken, no shimmer). |
+| `Wordmark` & Favicon | [`Wordmark.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/components/Wordmark.tsx), [`favicon.svg`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/public/favicon.svg) | Typographic SubstationIQ with "IQ" in --primary and 4px radius single-line diagram symbol. Matching SVG favicon. |
+| `/dev/components` | [`DevComponents.tsx`](file:///Users/studentuse33gmail.com/Desktop/SubstationAI/frontend/src/pages/DevComponents.tsx) | Visual verification page rendering all components across Light, Dark, and Outdoor themes and all interaction states. |
+
+### Post-Phase-2 Audit Scan
+
+All counters run across `src/components/` and `src/`:
+
+| Check | Target | Actual |
+|---|---|---|
+| Emoji in `src/components` | 0 | **0** |
+| Large radius (`rounded-xl/2xl/3xl`, arbitrary >4px) in `src/components` | 0 | **0** |
+| Shadows (`shadow-md/lg/xl/2xl`) in `src/components` | 0 | **0** |
+| Gradients (`bg-gradient`) in `src/components` | 0 | **0** |
+| Default Tailwind palette in `src/components` | 0 | **0** |
+| Hard-coded hex in `src/components` | 0 | **0** |
+
+### Acceptance
+
+- [x] All Phase 2 components implemented per `03-components.md`.
+- [x] No emoji, no default-palette classes, no radius above 4 px in `src/components`.
+- [x] `/dev/components` visual harness created and accessible in development.
+- [x] `npm run build` succeeds cleanly with 0 errors.
+
+---
+
+### Next: Phase 3 — The Answer Sheet (`TestSheet`)
+1. Build `TestSheet` combining `SafetyBlock`, `LimitsTable`, `Citation`, `SourcesList`, conditional section rendering, confidence indicator, and print stylesheet.
+

@@ -20,16 +20,18 @@ TEMPLATE_MARKER = "__TEMPLATE_FALLBACK__"
 class LLMGenerator:
     def __init__(self):
         self.provider = settings.LLM_PROVIDER
-        self.gemini_model = None
+        self.gemini_client = None
+        self.gemini_model_name = "gemini-flash-latest"
         self.groq_client = None
         self.ollama_client = None
 
         if self.provider == "gemini" and settings.GEMINI_API_KEY:
             try:
-                import google.generativeai as genai
+                from google import genai
 
-                genai.configure(api_key=settings.GEMINI_API_KEY)
-                self.gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+                self.gemini_client = genai.Client(
+                    api_key=settings.GEMINI_API_KEY,
+                )
             except Exception:
                 logger.exception("Gemini init failed")
         elif self.provider == "groq" and settings.GROQ_API_KEY:
@@ -49,7 +51,7 @@ class LLMGenerator:
 
     @property
     def available(self) -> bool:
-        return bool(self.gemini_model or self.groq_client or self.ollama_client)
+        return bool(self.gemini_client or self.groq_client or self.ollama_client)
 
     def _groq_call(self, client, stream: bool = False):
         return client.chat.completions.create(
@@ -67,10 +69,11 @@ class LLMGenerator:
         )
 
     def generate(self, prompt: str) -> str:
-        if self.gemini_model:
+        if self.gemini_client:
             try:
-                response = self.gemini_model.generate_content(
-                    f"{SYSTEM_PROMPT}\n\n{prompt}"
+                response = self.gemini_client.models.generate_content(
+                    model=self.gemini_model_name,
+                    contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
                 )
                 return response.text
             except Exception:
@@ -102,10 +105,11 @@ class LLMGenerator:
         return TEMPLATE_MARKER
 
     async def stream_generate(self, prompt: str) -> AsyncGenerator[str, None]:
-        if self.gemini_model:
+        if self.gemini_client:
             try:
-                response = self.gemini_model.generate_content(
-                    f"{SYSTEM_PROMPT}\n\n{prompt}", stream=True
+                response = self.gemini_client.models.generate_content_stream(
+                    model=self.gemini_model_name,
+                    contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
                 )
                 for chunk in response:
                     if chunk.text:

@@ -27,13 +27,16 @@ class LLMGenerator:
 
         if self.provider == "gemini" and settings.GEMINI_API_KEY:
             try:
+                import sys
                 from google import genai
 
                 self.gemini_client = genai.Client(
                     api_key=settings.GEMINI_API_KEY,
                 )
+                print(f"[GEMINI] Client initialized with model: {self.gemini_model_name}", file=sys.stderr)
                 logger.info("Gemini client initialized with model: %s", self.gemini_model_name)
             except Exception:
+                print(f"[GEMINI] Init failed: {sys.exc_info()[1]}", file=sys.stderr)
                 logger.exception("Gemini init failed")
         elif self.provider == "groq" and settings.GROQ_API_KEY:
             try:

@@ -35,5 +35,5 @@ services:
       - key: MONGO_DB
         value: substationiq
       - key: FRONTEND_URL
-        value: https://substationiq.vercel.app
+        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
 

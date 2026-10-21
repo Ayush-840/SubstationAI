@@ -127,8 +127,8 @@ _Numeric limits always come from the cited source or the verified test catalog. 
 
 | | |
 |---|---|
-| Live app | _add link_
-| Demo video | _add link_
+| Live app | [SubstationIQ](https://frontend-6w7a3xmci-ayush-840s-projects.vercel.app) |
+| Demo video | _add link_ |
 | Demo login | `demo@substationiq.dev` / `demo1234` (Trainee) · `engineer@substationiq.dev` / `engineer1234` (Engineer) · `admin@substationiq.dev` / `admin1234` (Admin) |
 
 ```
@@ -189,7 +189,7 @@ Full detail lives in [docs/TRD.md](docs/TRD.md).
 ### Option 1 — Docker (recommended)
 
 ```bash
-git clone https://github.com/<your-username>/substationiq.git
+git clone https://github.com/Ayush-840/SubstationAI.git
 cd substationiq
 cp .env.example .env        # add your API key
 docker compose up --build

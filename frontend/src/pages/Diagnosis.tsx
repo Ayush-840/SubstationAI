@@ -83,11 +83,11 @@ function DiagnoseForm() {
             <div key={i} className="card space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <p className="font-medium">{c.cause}</p>
-                <span className="pill bg-primary/10 text-primary">
+                <span className="text-primary" style={{ fontSize: '12px' }}>
                   likelihood {Math.round(c.likelihood * 100)}%
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-brdr">
+              <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--rule)' }}>
                 <div className="h-full bg-primary" style={{ width: `${c.likelihood * 100}%` }} />
               </div>
               <div>
@@ -228,11 +228,14 @@ function ResultChecker() {
 
         {result && (
           <div className="card space-y-2 animate-fade-up">
-            <span className={`pill ${
-              result.status === 'within limits' ? 'bg-success/15 text-success'
-              : result.status === 'borderline' ? 'bg-warning/15 text-warning'
-              : result.status === 'see criterion' ? 'bg-primary/10 text-primary'
-              : 'bg-danger/15 text-danger'}`}>
+            <span style={{
+              fontSize: '14px',
+              fontWeight: 500,
+              color: result.status === 'within limits' ? 'var(--success)'
+                : result.status === 'borderline' ? 'var(--warn)'
+                : result.status === 'see criterion' ? 'var(--primary)'
+                : 'var(--danger)',
+            }}>
               {result.status}
             </span>
             <p className="text-sm">
@@ -241,7 +244,7 @@ function ResultChecker() {
             </p>
             <p className="text-xs text-muted">{result.source}</p>
             {result.troubleshooting.length > 0 && (
-              <div className="border-t border-brdr pt-2">
+              <div className="border-t border-rule pt-2">
                 <p className="text-xs font-medium text-muted">Outside limits — probable causes</p>
                 <ul className="list-inside list-disc text-sm">
                   {result.troubleshooting.map((t, i) => (

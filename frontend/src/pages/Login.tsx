@@ -65,8 +65,8 @@ export default function Login() {
           </button>
         </p>
 
-        <div className="border-t border-brdr pt-3 text-xs text-muted space-y-2">
-          <p className="font-medium text-txt mb-1">Demo credentials</p>
+        <div className="border-t border-rule pt-3 text-xs text-muted space-y-2">
+          <p className="font-medium text-ink mb-1">Demo credentials</p>
           {(Object.keys(DEMO_ACCOUNTS) as (keyof typeof DEMO_ACCOUNTS)[]).map((role) => (
             <button
               key={role}

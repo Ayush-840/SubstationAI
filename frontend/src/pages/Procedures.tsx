@@ -112,7 +112,7 @@ export default function Procedures() {
           <button className="btn-secondary" onClick={() => { setRun(null); setDetail(null) }}>Close</button>
         </div>
 
-        <div className="h-2 overflow-hidden rounded-full bg-brdr">
+        <div className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--rule)' }}>
           <div className="h-full bg-primary transition-all"
                style={{ width: `${totalCount ? (doneCount / totalCount) * 100 : 0}%` }} />
         </div>
@@ -123,18 +123,18 @@ export default function Procedures() {
         {safetySteps.length > 0 && (
           <div className="card border-warning" style={{ borderWidth: 2 }}>
             <h3 className="mb-2 flex items-center gap-2 font-semibold">
-              🦺 Safety gate — tick all before continuing
+              Safety gate — tick all before continuing
             </h3>
             <div className="space-y-2">
               {safetySteps.map((s) => (
                 <label key={s.step_no}
-                       className="flex min-h-[48px] cursor-pointer items-center gap-3 rounded-control border border-brdr px-3">
+                       className="flex min-h-[48px] cursor-pointer items-center gap-3 rounded border border-rule px-3">
                   <input type="checkbox" className="h-5 w-5 accent-[var(--primary)]"
                          checked={s.done} onChange={(e) => tick(s.step_no, e.target.checked)} />
                   <span className="flex-1 text-sm">{s.text}</span>
-                  <button type="button" className={`pill ${s.flagged ? 'bg-danger/15 text-danger' : 'bg-brdr text-muted'}`}
+                  <button type="button" style={{ fontSize: '12px', color: s.flagged ? 'var(--danger)' : 'var(--muted)', border: `1px solid ${s.flagged ? 'var(--danger)' : 'var(--rule)'}`, borderRadius: 'var(--radius-sm)', padding: '2px 8px', background: 'transparent', cursor: 'pointer' }}
                           onClick={(e) => { e.preventDefault(); tick(s.step_no, s.done, !s.flagged) }}>
-                    {s.flagged ? '⚠ flagged' : 'flag issue'}
+                    {s.flagged ? 'Flagged' : 'Flag issue'}
                   </button>
                 </label>
               ))}
@@ -155,11 +155,11 @@ export default function Procedures() {
                   <p className="text-sm">
                     <span className="mr-1.5 font-semibold">{s.step_no}.</span>{s.text}
                   </p>
-                  <span className="pill mt-1 bg-brdr text-muted">{s.type}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--muted)' }} className="mt-1 inline-block">{s.type}</span>
                 </div>
-                <button className={`pill ${s.flagged ? 'bg-danger/15 text-danger' : 'bg-brdr text-muted'}`}
+                <button style={{ fontSize: '12px', color: s.flagged ? 'var(--danger)' : 'var(--muted)', border: `1px solid ${s.flagged ? 'var(--danger)' : 'var(--rule)'}`, borderRadius: 'var(--radius-sm)', padding: '2px 8px', background: 'transparent', cursor: 'pointer' }}
                         onClick={() => tick(s.step_no, s.done, !s.flagged)}>
-                  {s.flagged ? '⚠ flagged' : 'flag'}
+                  {s.flagged ? 'Flagged' : 'Flag'}
                 </button>
               </div>
             ))}
@@ -170,7 +170,7 @@ export default function Procedures() {
 
         <div className="flex gap-2">
           <button className="btn-primary" disabled={!allDone || !!run.completed_at} onClick={complete}>
-            {run.completed_at ? 'Completed ✓' : 'Complete procedure'}
+            {run.completed_at ? 'Completed' : 'Complete procedure'}
           </button>
           {run.completed_at && (
             <button className="btn-secondary" onClick={exportPdf}>Export PDF</button>
@@ -209,7 +209,7 @@ export default function Procedures() {
             <div key={t.id} className="card space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="font-medium">{t.name}</h3>
-                <span className="pill bg-primary/10 text-primary">{t.category ?? 'routine'}</span>
+                <span className="text-primary" style={{ fontSize: '12px' }}>{t.category ?? 'routine'}</span>
               </div>
               {t.summary && <p className="text-sm text-muted">{t.summary}</p>}
               <button className="btn-primary !min-h-[36px] w-fit" onClick={() => start(t.id)}>
@@ -226,7 +226,7 @@ export default function Procedures() {
           {runs.map((r) => (
             <div key={r.id} className="card flex items-center justify-between text-sm">
               <span>Run #{r.id} · test {r.test_id}</span>
-              <span className="pill bg-brdr text-muted">
+              <span className="text-muted" style={{ fontSize: '12px' }}>
                 {r.completed_at ? `completed ${new Date(r.completed_at).toLocaleString()}` : 'in progress'}
               </span>
             </div>

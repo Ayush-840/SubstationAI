@@ -1,0 +1,148 @@
+/* =========================================================
+   SubstationIQ — Design tokens
+   Light / Dark / Outdoor themes (data-theme attribute)
+   ========================================================= */
+
+/* ------- Light ("Paper") ------- */
+:root {
+  --bg: #F3F0E8;
+  --surface: #FBF9F4;
+  --surface-sunken: #EBE7DC;
+  --ink: #17201C;
+  --muted: #5E6B63;
+  --rule: #CFCABD;
+  --rule-strong: #17201C;
+
+  --primary: #1F5C45;
+  --primary-ink: #FFFFFF;
+  --hazard: #F2B800;
+  --hazard-ink: #17201C;
+  --danger: #B3261E;
+  --warn: #A15C00;
+  --success: #2F7A3E;
+  --focus: #0B57D0;
+
+  --radius-sm: 2px;
+  --radius: 4px;
+
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Newsreader", Georgia, serif;
+
+  --text-label-size: 12px;
+  --text-small-size: 14px;
+  --text-body-size: 17px;
+  --text-lead-size: 20px;
+  --text-title-size: 28px;
+  --text-value-size: 32px;
+}
+
+/* ------- Dark ("Control room") ------- */
+:root[data-theme="dark"] {
+  --bg: #101512;
+  --surface: #161D19;
+  --surface-sunken: #0C100E;
+  --ink: #E7EBE4;
+  --muted: #93A097;
+  --rule: #2B3630;
+  --rule-strong: #E7EBE4;
+  --primary: #7BC9A0;
+  --primary-ink: #0C100E;
+  --hazard: #FFC933;
+  --hazard-ink: #101512;
+  --danger: #FF7A70;
+  --warn: #F0A63A;
+  --success: #6FD08A;
+  --focus: #8AB4F8;
+}
+
+/* ------- Outdoor ("Sunlight") — max contrast for direct sun ------- */
+:root[data-theme="outdoor"] {
+  --bg: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-sunken: #F2F2F2;
+  --ink: #000000;
+  --muted: #2B2B2B;
+  --rule: #000000;
+  --rule-strong: #000000;
+  --primary: #0B4A33;
+  --primary-ink: #FFFFFF;
+  --hazard: #FFD400;
+  --hazard-ink: #000000;
+  --danger: #9B0000;
+  --warn: #7A3E00;
+  --success: #0B5A1E;
+  --focus: #003EA6;
+  --text-body-size: 18px;
+}
+
+/* ------- System dark fallback (no data-theme set) ------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #101512;
+    --surface: #161D19;
+    --surface-sunken: #0C100E;
+    --ink: #E7EBE4;
+    --muted: #93A097;
+    --rule: #2B3630;
+    --rule-strong: #E7EBE4;
+    --primary: #7BC9A0;
+    --primary-ink: #0C100E;
+    --hazard: #FFC933;
+    --hazard-ink: #101512;
+    --danger: #FF7A70;
+    --warn: #F0A63A;
+    --success: #6FD08A;
+    --focus: #8AB4F8;
+  }
+}
+
+/* ------- Global resets using tokens ------- */
+html {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  line-height: 1.55;
+}
+
+/* Tabular numbers utility — always use on data values */
+.num, td.num, .value, [data-num] {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accessible focus ring — distinct from primary */
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Hazard stripe — the ONE permitted gradient (hard-edged chevron pattern) */
+.hazard-stripe {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--hazard) 0 12px,
+    var(--ink) 12px 24px
+  );
+  height: 10px;
+  flex-shrink: 0;
+}
+
+/* Text fade-in for streaming (150 ms, the only motion animation) */
+@keyframes token-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.stream-token {
+  animation: token-fade 150ms ease both;
+}
+
+/* Reduced motion — honour OS preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

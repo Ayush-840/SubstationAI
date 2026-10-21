@@ -98,7 +98,7 @@ function Documents() {
       <div className="card overflow-x-auto p-0">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-brdr text-left text-muted">
+            <tr className="border-b border-rule text-left text-muted">
               <th className="p-3">Title</th>
               <th className="p-3">Type</th>
               <th className="p-3">Pages</th>
@@ -109,14 +109,14 @@ function Documents() {
           </thead>
           <tbody>
             {docs.map((d) => (
-              <tr key={d.id} className="border-b border-brdr last:border-0">
+              <tr key={d.id} className="border-b border-rule last:border-0">
                 <td className="p-3 font-medium">{d.title}</td>
                 <td className="p-3">{d.doc_type ?? '—'}</td>
                 <td className="p-3">{d.page_count}</td>
                 <td className="p-3"><StatusPill status={d.status} /></td>
                 <td className="p-3 text-muted">{new Date(d.created_at).toLocaleDateString()}</td>
                 <td className="p-3 text-right">
-                  <button className="pill bg-danger/10 text-danger" onClick={() => remove(d.id)}>delete</button>
+                  <button className="text-danger text-sm underline" onClick={() => remove(d.id)}>Delete</button>
                 </td>
               </tr>
             ))}
@@ -164,7 +164,7 @@ function AnalyticsView() {
           {data.top_questions.map((q, i) => (
             <li key={i} className="flex justify-between gap-4">
               <span className="truncate">{q.question}</span>
-              <span className="pill bg-primary/10 text-primary">{q.count}×</span>
+              <span className="text-primary font-medium" style={{ fontSize: '12px', fontFamily: 'var(--font-data)' }}>{q.count}×</span>
             </li>
           ))}
           {data.top_questions.length === 0 && <li className="text-muted">No data yet.</li>}
@@ -177,7 +177,7 @@ function AnalyticsView() {
           {data.unanswered_queries.map((u, i) => (
             <li key={i} className="flex justify-between gap-4">
               <span className="truncate">{u.query}</span>
-              <span className="pill bg-danger/10 text-danger">{u.intent ?? 'unknown'}</span>
+              <span className="text-danger" style={{ fontSize: '12px' }}>{u.intent ?? 'unknown'}</span>
             </li>
           ))}
           {data.unanswered_queries.length === 0 && <li className="text-muted">None logged.</li>}

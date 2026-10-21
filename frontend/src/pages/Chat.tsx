@@ -119,7 +119,7 @@ export default function Chat() {
   return (
     <div className="flex h-full flex-col">
       {/* Equipment filter chips */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-brdr px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-b border-rule px-4 py-3">
         <button className={`chip ${selected === '' ? 'chip-selected' : ''}`} onClick={() => setSelected('')}>
           All
         </button>
@@ -157,7 +157,7 @@ export default function Chat() {
           {messages.map((m, i) =>
             m.role === 'user' ? (
               <div key={i} className="animate-fade-up flex justify-end">
-                <div className="max-w-[80%] rounded-card bg-primary/10 px-4 py-2.5 text-sm">{m.content}</div>
+                <div className="max-w-[80%] rounded px-4 py-2.5 text-sm" style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>{m.content}</div>
               </div>
             ) : (
               <AssistantMessage
@@ -177,7 +177,7 @@ export default function Chat() {
       </div>
 
       {/* Composer */}
-      <div className="border-t border-brdr p-3">
+      <div className="border-t border-rule p-3">
         <form
           className="mx-auto flex max-w-3xl items-end gap-2"
           onSubmit={(e) => { e.preventDefault(); send(input) }}
@@ -228,7 +228,7 @@ function AssistantMessage({ msg, streaming, statusLine, feedback, feedbackBusy, 
       {isNotFound && <DangerBanner message={msg.content} />}
 
       {result && result.source_type === 'out_of_scope' && !isGuardrail && (
-        <div className="rounded-card border border-muted bg-muted/10 px-4 py-3 text-sm text-muted">
+        <div className="rounded border border-rule px-4 py-3 text-sm text-muted">
           {msg.content}
         </div>
       )}
@@ -241,11 +241,11 @@ function AssistantMessage({ msg, streaming, statusLine, feedback, feedbackBusy, 
 
       {result && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
-            {result.intent && <span className="pill bg-primary/10 text-primary">{result.intent}</span>}
-            {result.test && <span className="pill bg-accent/10 text-accent">{result.test}</span>}
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            {result.intent && <span className="text-primary font-medium">{result.intent}</span>}
+            {result.test && <span className="text-muted">{result.test}</span>}
             <ConfidenceBadge value={result.confidence ?? 0} />
-            <span className="pill bg-brdr text-muted">{result.source_type}</span>
+            <span className="text-muted" style={{ fontSize: '12px' }}>{result.source_type}</span>
           </div>
 
           {result.citations?.length > 0 && (
@@ -260,13 +260,13 @@ function AssistantMessage({ msg, streaming, statusLine, feedback, feedbackBusy, 
           )}
 
           {result.message_id && !isGuardrail && !isNotFound && (
-            <div className="flex flex-wrap items-center gap-1 border-t border-brdr pt-2 text-sm">
-              <button className={`btn-secondary !min-h-[32px] !px-2 ${feedback === 1 ? '!border-success text-success' : ''}`}
+            <div className="flex flex-wrap items-center gap-1 border-t border-rule pt-2 text-sm">
+              <button className="btn-secondary" style={{ minHeight: '32px', padding: '0 8px', color: feedback === 1 ? 'var(--success)' : undefined, borderColor: feedback === 1 ? 'var(--success)' : undefined }}
                       disabled={feedbackBusy} aria-label="Helpful" aria-pressed={feedback === 1}
-                      onClick={() => onFeedback(1)}>👍</button>
-              <button className={`btn-secondary !min-h-[32px] !px-2 ${feedback === -1 ? '!border-danger text-danger' : ''}`}
+                      onClick={() => onFeedback(1)}>Helpful</button>
+              <button className="btn-secondary" style={{ minHeight: '32px', padding: '0 8px', color: feedback === -1 ? 'var(--danger)' : undefined, borderColor: feedback === -1 ? 'var(--danger)' : undefined }}
                       disabled={feedbackBusy} aria-label="Not helpful" aria-pressed={feedback === -1}
-                      onClick={() => onFeedback(-1)}>👎</button>
+                      onClick={() => onFeedback(-1)}>Not helpful</button>
               {feedbackBusy && <span className="text-xs text-muted">Saving…</span>}
               {feedbackError && (
                 <span className="text-xs text-danger" role="alert">

@@ -3,11 +3,11 @@ import { api } from '../api/client'
 import type { ConversationDetail, ConversationSummary } from '../types'
 import { SafetyBanner, ConfidenceBadge } from '../components/common'
 
-const MODE_ICON: Record<string, string> = {
-  qa: '💬',
-  procedure: '📋',
-  diagnosis: '🩺',
-  learn: '🎓',
+const MODE_LABEL: Record<string, string> = {
+  qa: 'Q&A',
+  procedure: 'Procedure',
+  diagnosis: 'Diagnosis',
+  learn: 'Learn',
 }
 
 export default function History() {
@@ -73,14 +73,14 @@ export default function History() {
           {!openLoading && open.messages.map((m) =>
             m.role === 'user' ? (
               <div key={m.id} className="animate-fade-up flex justify-end">
-                <div className="max-w-[80%] rounded-card bg-primary/10 px-4 py-2.5 text-sm">{m.content}</div>
+                <div className="max-w-[80%] rounded px-4 py-2.5 text-sm" style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>{m.content}</div>
               </div>
             ) : (
               <div key={m.id} className="card space-y-2">
                 {m.citations && m.citations.length > 0 && <SafetyBanner compact />}
                 <div className="whitespace-pre-wrap text-sm">{m.content}</div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {m.intent && <span className="pill bg-primary/10 text-primary">{m.intent}</span>}
+                  {m.intent && <span className="text-primary font-medium" style={{ fontSize: '12px' }}>{m.intent}</span>}
                   {m.confidence != null && <ConfidenceBadge value={m.confidence} />}
                 </div>
                 {m.citations && m.citations.length > 0 && (
@@ -137,7 +137,7 @@ export default function History() {
                     }
                   }}>
             <span className="flex items-center gap-2">
-              <span aria-hidden>{MODE_ICON[c.mode] ?? '💬'}</span>
+              <span aria-hidden className="text-muted" style={{ fontSize: '12px' }}>{MODE_LABEL[c.mode] ?? 'Q&A'}</span>
               <span className="font-medium">{c.title ?? `Conversation ${c.id}`}</span>
             </span>
             <span className="text-xs text-muted">

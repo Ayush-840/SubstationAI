@@ -71,10 +71,12 @@ export default function Learn() {
                   const isCorrect = q.correct_index === oi
                   const showState = score != null
                   return (
-                    <label key={oi} className={`flex min-h-[44px] cursor-pointer items-center gap-3 rounded-control border px-3 text-sm
-                      ${showState && isCorrect ? 'border-success bg-success/10' : ''}
-                      ${showState && chosen && !isCorrect ? 'border-danger bg-danger/10' : ''}
-                      ${!showState && chosen ? 'border-primary bg-primary/10' : 'border-brdr'}`}>
+                    <label key={oi} style={{
+                      display: 'flex', minHeight: '44px', cursor: 'pointer', alignItems: 'center',
+                      gap: '12px', borderRadius: 'var(--radius)', padding: '0 12px', fontSize: '14px',
+                      border: `1px solid ${showState && isCorrect ? 'var(--success)' : showState && chosen && !isCorrect ? 'var(--danger)' : !showState && chosen ? 'var(--primary)' : 'var(--rule)'}`,
+                      background: showState && isCorrect ? 'color-mix(in srgb, var(--success) 10%, transparent)' : showState && chosen && !isCorrect ? 'color-mix(in srgb, var(--danger) 10%, transparent)' : !showState && chosen ? 'color-mix(in srgb, var(--primary) 10%, transparent)' : 'transparent',
+                    }}>
                       <input type="radio" name={`q-${q.id}`} className="accent-[var(--primary)]"
                              checked={chosen} onChange={() => setAnswers({ ...answers, [q.id]: oi })} />
                       {opt}

@@ -4,8 +4,30 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="SubstationIQ — intelligent assistant for substation asset maintenance" />
-    <title>SubstationIQ — Right answer. Safe steps. Every time.</title>
+    <meta name="description" content="Test procedures, limits and standards for substation maintenance." />
+    <title>SubstationIQ</title>
+    <!--
+      No-flash theme init: read localStorage BEFORE first paint.
+      Sets data-theme on <html> so tokens.css variables are applied immediately.
+      Must be inline and synchronous — do NOT defer or move to a module.
+    -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('theme');
+          var html = document.documentElement;
+          if (t === 'dark') {
+            html.dataset.theme = 'dark';
+          } else if (t === 'outdoor') {
+            html.dataset.theme = 'outdoor';
+          } else if (!t || t === 'system') {
+            if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+              html.dataset.theme = 'dark';
+            }
+          }
+        } catch (_) { /* localStorage blocked */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

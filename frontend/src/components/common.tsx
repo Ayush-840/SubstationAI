@@ -123,13 +123,10 @@ export function ConfidenceBadge({ value }: { value: number }) {
         <path d="M7 1.5L13 12.5H1L7 1.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
         <path d="M7 5.5v3M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
-      Low confidence. Check this against the OEM manual before acting.
+      {copy.components.testSheet.confidence}
     </p>
   )
 }
-
-export const FOOTER_DISCLAIMER =
-  'SubstationIQ is an aid, not a substitute for official procedures, permits and OEM instructions.'
 
 export function Disclaimer() {
   return (
@@ -141,7 +138,7 @@ export function Disclaimer() {
         padding: '0 16px',
       }}
     >
-      {FOOTER_DISCLAIMER}
+      {copy.brand.footerDisclaimer}
     </p>
   )
 }

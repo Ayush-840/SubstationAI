@@ -20,14 +20,9 @@ import {
   TestSheet,
 } from '../components/common'
 import { useSources } from '../App'
+import { copy } from '../copy'
 
-const SUGGESTED = [
-  { query: 'IR value low on 132 kV CT after rain, what next?', intent: 'Troubleshooting' },
-  { query: 'Acceptable contact resistance, 220 kV SF6 breaker', intent: 'Limits' },
-  { query: 'Instruments needed for tan delta on a CVT', intent: 'Equipment' },
-  { query: 'How do I perform an insulation resistance test on a power transformer?', intent: 'Procedure' },
-  { query: 'Which standard covers DGA interpretation for transformers?', intent: 'Standards' },
-]
+const SUGGESTED = copy.pages.ask.suggestedQueries
 
 interface Msg {
   role: 'user' | 'assistant'
@@ -64,7 +59,7 @@ export default function Chat() {
     setInput('')
     setMessages((m) => [...m, { role: 'user', content: message }])
     setStreaming(true)
-    setStatusLine('Searching manuals…')
+    setStatusLine(copy.pages.ask.streamingStatus.searching)
 
     const partial: Msg = { role: 'assistant', content: '' }
     setMessages((m) => [...m, partial])
@@ -74,37 +69,37 @@ export default function Chat() {
       await streamSSE('/api/chat/stream',
         { message, equipment: selected || undefined, conversation_id: conversationId ?? undefined },
         (ev) => {
-          if (ev.type === 'intent') setStatusLine('Writing answer…')
+          if (ev.type === 'intent') setStatusLine(copy.pages.ask.streamingStatus.reading)
           if (ev.type === 'token') {
             setMessages((m) => {
-              const copy = [...m]
-              copy[idx(copy)] = { ...copy[idx(copy)], content: copy[idx(copy)].content + ev.data }
-              return copy
+              const copyArr = [...m]
+              copyArr[idx(copyArr)] = { ...copyArr[idx(copyArr)], content: copyArr[idx(copyArr)].content + ev.data }
+              return copyArr
             })
           }
           if (ev.type === 'done') {
             const result = ev.data as ChatResult
             setConversationId(result.conversation_id)
             setMessages((m) => {
-              const copy = [...m]
-              copy[idx(copy)] = { role: 'assistant', content: result.answer, result }
-              return copy
+              const copyArr = [...m]
+              copyArr[idx(copyArr)] = { role: 'assistant', content: result.answer, result }
+              return copyArr
             })
           }
           if (ev.type === 'error') {
             setMessages((m) => {
-              const copy = [...m]
-              copy[idx(copy)] = { role: 'assistant', content: ev.data.message, isError: true }
-              return copy
+              const copyArr = [...m]
+              copyArr[idx(copyArr)] = { role: 'assistant', content: ev.data.message, isError: true }
+              return copyArr
             })
           }
         },
       )
     } catch (err: any) {
       setMessages((m) => {
-        const copy = [...m]
-        copy[idx(copy)] = { role: 'assistant', content: err.message ?? 'Request failed', isError: true }
-        return copy
+        const copyArr = [...m]
+        copyArr[idx(copyArr)] = { role: 'assistant', content: err.message ?? 'Request failed', isError: true }
+        return copyArr
       })
     } finally {
       setStreaming(false)
@@ -154,7 +149,7 @@ export default function Chat() {
               fontFamily: 'var(--font-display)',
               lineHeight: 1.2,
             }}>
-              What do you need to check?
+              {copy.pages.ask.emptyHeading}
             </h1>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {SUGGESTED.map((s) => (
@@ -256,7 +251,7 @@ export default function Chat() {
             className="input resize-none"
             style={{ flex: 1, minWidth: 0 }}
             rows={Math.min(4, Math.max(1, input.split('\n').length))}
-            placeholder="Ask a maintenance question…"
+            placeholder={copy.pages.ask.composerPlaceholder}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -268,7 +263,7 @@ export default function Chat() {
             disabled={streaming}
           />
           <button className="btn-primary" disabled={streaming || !input.trim()} aria-label="Send">
-            Send
+            {copy.pages.ask.composerSend}
           </button>
         </form>
       </div>

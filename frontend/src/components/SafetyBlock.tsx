@@ -1,4 +1,5 @@
 import React from 'react'
+import { copy } from '../copy'
 
 export interface SafetyBlockProps {
   label?: string
@@ -8,11 +9,8 @@ export interface SafetyBlockProps {
   style?: React.CSSProperties
 }
 
-const DEFAULT_SAFETY_RULES = [
-  'Isolate. Earth. Verify dead.',
-  'Permit-to-work in place. PPE on.',
-  "This is a reminder, not your site procedure. Follow your utility's safety rules.",
-]
+const DEFAULT_LABEL = copy.components.safetyBlock.label
+const DEFAULT_RULES = copy.components.safetyBlock.rules
 
 /**
  * SafetyBlock per 03-components.md section 3:
@@ -23,8 +21,8 @@ const DEFAULT_SAFETY_RULES = [
  * - Never collapsible, never dismissible.
  */
 export function SafetyBlock({
-  label = 'SAFETY BEFORE YOU START',
-  rules = DEFAULT_SAFETY_RULES,
+  label = DEFAULT_LABEL,
+  rules = DEFAULT_RULES,
   compact = false,
   children,
   style,

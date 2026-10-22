@@ -5,6 +5,7 @@ import { Citation, type CitationItem } from './Citation'
 import { SourcesList } from './Sources'
 import { SectionLabel } from './SectionLabel'
 import { ConfidenceBadge } from './common'
+import { copy } from '../copy'
 
 export interface TestSheetProps {
   intent: string
@@ -24,13 +25,13 @@ export interface TestSheetProps {
 }
 
 const SECTION_ORDER = [
-  { key: 'equipment', label: 'INSTRUMENTS' },
-  { key: 'steps', label: 'PROCEDURE' },
-  { key: 'limits', label: 'ACCEPTABLE LIMITS' },
-  { key: 'troubleshooting', label: 'IF OUTSIDE LIMITS' },
-  { key: 'standards', label: 'APPLICABLE STANDARDS' },
-  { key: 'purpose', label: 'PURPOSE' },
-  { key: 'comparison', label: 'COMPARISON' },
+  { key: 'equipment', label: copy.components.testSheet.sections.instruments },
+  { key: 'steps', label: copy.components.testSheet.sections.procedure },
+  { key: 'limits', label: copy.components.testSheet.sections.limits },
+  { key: 'troubleshooting', label: copy.components.testSheet.sections.troubleshooting },
+  { key: 'standards', label: copy.components.testSheet.sections.standards },
+  { key: 'purpose', label: copy.components.testSheet.sections.purpose },
+  { key: 'comparison', label: copy.components.testSheet.sections.comparison },
 ] as const
 
 function parseLimitRows(text: string): LimitRow[] {
@@ -357,7 +358,7 @@ export function TestSheet({
                 aria-pressed={feedbackGiven === 1}
                 onClick={() => handleFeedback(1)}
               >
-                Helpful
+                {copy.components.testSheet.feedback.helpful}
               </button>
               <button
                 type="button"
@@ -374,14 +375,16 @@ export function TestSheet({
                 aria-pressed={feedbackGiven === -1}
                 onClick={() => handleFeedback(-1)}
               >
-                Not helpful
+                {copy.components.testSheet.feedback.notHelpful}
               </button>
               {feedbackBusy && (
-                <span style={{ fontSize: '12px', color: 'var(--muted)', alignSelf: 'center' }}>Saving…</span>
+                <span style={{ fontSize: '12px', color: 'var(--muted)', alignSelf: 'center' }}>
+                  {copy.components.testSheet.feedback.saving}
+                </span>
               )}
               {feedbackError && (
                 <span style={{ fontSize: '12px', color: 'var(--danger)' }} role="alert">
-                  {feedbackError} — tap again to retry.
+                  {feedbackError} — {copy.components.testSheet.feedback.error}
                 </span>
               )}
             </div>

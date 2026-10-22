@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react'
 import { useAuth } from '../auth'
 import { Wordmark, Disclaimer, AllEquipmentGlyph } from '../components/common'
+import { copy } from '../copy'
 
 const DEMO_ACCOUNTS = {
   trainee: { email: 'demo@substationiq.dev', password: 'demo1234', label: 'Trainee' },
@@ -25,7 +26,7 @@ export default function Login() {
       if (mode === 'login') await login(email, password)
       else await register(name, email, password)
     } catch (err: any) {
-      setError(err.message || 'Authentication failed')
+      setError(err.message || copy.errors.authFailed)
     }
   }
 
@@ -34,6 +35,12 @@ export default function Login() {
     setEmail(DEMO_ACCOUNTS[role].email)
     setPassword(DEMO_ACCOUNTS[role].password)
   }
+
+  const heading = mode === 'login' ? copy.pages.login.heading.login : copy.pages.login.heading.register
+  const description = mode === 'login' ? copy.pages.login.description.login : copy.pages.login.description.register
+  const submitLabel = loading ? copy.pages.login.submit.loading : (mode === 'login' ? copy.pages.login.submit.login : copy.pages.login.submit.register)
+  const switchText = mode === 'login' ? copy.pages.login.switch.login : copy.pages.login.switch.register
+  const switchAction = mode === 'login' ? copy.pages.login.switch.register : copy.pages.login.switch.login
 
   return (
     <div style={{
@@ -70,7 +77,7 @@ export default function Login() {
             color: 'var(--ink)',
             maxWidth: '400px',
           }}>
-            Test procedures, limits and standards for substation maintenance.
+            {copy.brand.tagline}
           </p>
           <div style={{
             width: '120px',
@@ -103,7 +110,7 @@ export default function Login() {
                 color: 'var(--muted)',
                 fontFamily: 'var(--font-data)',
               }}>
-                Demo Accounts
+                {copy.pages.login.demoAccounts.heading}
               </p>
               {(Object.keys(DEMO_ACCOUNTS) as (keyof typeof DEMO_ACCOUNTS)[]).map((role) => (
                 <div key={role} style={{ fontSize: '12px', fontFamily: 'var(--font-data)', marginBottom: '4px', color: 'var(--ink)' }}>
@@ -131,10 +138,10 @@ export default function Login() {
               color: 'var(--ink)',
               fontFamily: 'var(--font-display)',
             }}>
-              {mode === 'login' ? 'Sign in' : 'Create account'}
+              {heading}
             </h1>
             <p style={{ margin: '0 0 24px', fontSize: '15px', color: 'var(--muted)' }}>
-              {mode === 'login' ? 'Enter your credentials to access SubstationIQ' : 'Register for access to maintenance procedures and limits'}
+              {description}
             </p>
 
             {mode === 'register' && (
@@ -174,11 +181,11 @@ export default function Login() {
             {error && <p style={{ marginTop: '12px', color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
 
             <Button variant="primary" type="submit" style={{ width: '100%', marginTop: '8px' }} disabled={loading}>
-              {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Register'}
+              {submitLabel}
             </Button>
 
             <p style={{ marginTop: '16px', textAlign: 'center', fontSize: '14px', color: 'var(--muted)' }}>
-              {mode === 'login' ? "Don't have an account? " : 'Already registered? '}
+              {switchText}
               <button
                 type="button"
                 onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
@@ -192,7 +199,7 @@ export default function Login() {
                   fontFamily: 'var(--font-ui)',
                 }}
               >
-                {mode === 'login' ? 'Register' : 'Sign in'}
+                {switchAction}
               </button>
             </p>
           </form>
@@ -224,7 +231,7 @@ export default function Login() {
             color: 'var(--ink)',
             maxWidth: '360px',
           }}>
-            Test procedures, limits and standards for substation maintenance.
+            {copy.brand.tagline}
           </p>
           <div style={{
             width: '80px',
@@ -259,7 +266,7 @@ export default function Login() {
                 color: 'var(--muted)',
                 fontFamily: 'var(--font-data)',
               }}>
-                Demo Accounts
+                {copy.pages.login.demoAccounts.heading}
               </p>
               {(Object.keys(DEMO_ACCOUNTS) as (keyof typeof DEMO_ACCOUNTS)[]).map((role) => (
                 <div key={role} style={{ fontSize: '12px', fontFamily: 'var(--font-data)', marginBottom: '4px', color: 'var(--ink)' }}>
@@ -284,10 +291,10 @@ export default function Login() {
               color: 'var(--ink)',
               fontFamily: 'var(--font-display)',
             }}>
-              {mode === 'login' ? 'Sign in' : 'Create account'}
+              {heading}
             </h1>
             <p style={{ margin: '0 0 16px', fontSize: '14px', color: 'var(--muted)' }}>
-              {mode === 'login' ? 'Enter your credentials to access SubstationIQ' : 'Register for access to maintenance procedures and limits'}
+              {description}
             </p>
 
             {mode === 'register' && (
@@ -327,11 +334,11 @@ export default function Login() {
             {error && <p style={{ color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
 
             <Button variant="primary" type="submit" disabled={loading}>
-              {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Register'}
+              {submitLabel}
             </Button>
 
             <p style={{ textAlign: 'center', fontSize: '14px', color: 'var(--muted)' }}>
-              {mode === 'login' ? "Don't have an account? " : 'Already registered? '}
+              {switchText}
               <button
                 type="button"
                 onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
@@ -345,7 +352,7 @@ export default function Login() {
                   fontFamily: 'var(--font-ui)',
                 }}
               >
-                {mode === 'login' ? 'Register' : 'Sign in'}
+                {switchAction}
               </button>
             </p>
           </form>

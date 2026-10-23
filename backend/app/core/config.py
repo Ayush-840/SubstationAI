@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # MongoDB
     MONGO_URL: str = "mongodb://mongo:27017"
     MONGO_DB: str = "substationiq"
+    # Optional Atlas credentials (ignored if MONGO_URL is set)
+    MONGODB_USERNAME: str | None = None
+    MONGODB_PASSWORD: str | None = None
+    MONGODB_URI: str | None = None
 
     # JWT
     JWT_SECRET: str = "change-me"

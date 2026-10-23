@@ -6,14 +6,56 @@ services:
     buildCommand: ""
     startCommand: ""
     envVars:
+      # LLM
       - key: LLM_PROVIDER
         value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OLLAMA_MODEL
+        value: llama3.1:8b
+      - key: OLLAMA_BASE_URL
+        value: http://localhost:11434
+
+      # Embeddings
       - key: EMBED_MODEL
         value: BAAI/bge-small-en-v1.5
+
+      # Database - PostgreSQL (managed by Render)
       - key: DATABASE_URL
-        value: sqlite:///./app.db
+        fromDatabase:
+          name: substationiq-db
+          property: connectionString
+
+      # MongoDB (Atlas or self-hosted)
+      - key: MONGO_URL
+        sync: false
+      - key: MONGO_DB
+        value: substationiq
+
+      # Redis (managed by Render)
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: substationiq-redis
+          property: connectionString
+
+      # JWT
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "1440"
+      - key: REFRESH_EXPIRE_DAYS
+        value: "7"
+
+      # ChromaDB (persistent disk)
       - key: CHROMA_PATH
         value: /app/data/chroma
+
+      # Retrieval
       - key: CONFIDENCE_THRESHOLD
         value: "0.35"
       - key: TOP_K_VECTOR
@@ -22,18 +64,40 @@ services:
         value: "20"
       - key: TOP_K_RERANK
         value: "6"
+
+      # Upload
       - key: MAX_UPLOAD_MB
         value: "25"
+
+      # Frontend URL (for CORS)
+      - key: FRONTEND_URL
+        value: https://substationiq.vercel.app
+
+      # CORS allow-list (comma-separated)
+      - key: CORS_ALLOW_ORIGINS
+        value: https://substationiq.vercel.app,https://*.vercel.app
+
+      # Rate limiting
+      - key: RATE_LIMIT_LOGIN
+        value: 5/minute
+      - key: RATE_LIMIT_CHAT
+        value: 30/minute
+
+      # Logging
       - key: LOG_LEVEL
         value: INFO
-      - key: JWT_ALGORITHM
-        value: HS256
-      - key: JWT_EXPIRE_MINUTES
-        value: "1440"
-      - key: MONGO_URL
-        value: ""
-      - key: MONGO_DB
-        value: substationiq
-      - key: FRONTEND_URL
-        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
 
+databases:
+  - name: substationiq-db
+    databaseName: substationiq
+    user: substation
+    plan: free
+
+  - name: substationiq-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+
+disk:
+  name: chroma-data
+  mountPath: /app/data
+  sizeGB: 1

@@ -19,10 +19,24 @@ from app.core.config import get_settings
 
 @lru_cache()
 def get_limiter() -> Limiter:
-    """Create a Limiter instance with Redis backend if available, else in-memory."""
-    settings = get_settings()
-    # Use Redis if available for multi-worker support (Day 9), else in-memory
-    storage_uri = getattr(settings, "REDIS_URL", None) or "memory://"
+    """Create a Limiter instance with in-memory storage (tests) or Redis (production)."""
+    import sys
+    # In tests, always use in-memory storage
+    if "pytest" in sys.modules:
+        storage_uri = "memory://"
+    else:
+        settings = get_settings()
+        storage_uri = "memory://"
+        redis_url = getattr(settings, "REDIS_URL", None)
+        if redis_url:
+            # Quick connectivity probe
+            try:
+                import redis
+                test_client = redis.from_url(redis_url, socket_connect_timeout=0.5)
+                test_client.ping()
+                storage_uri = redis_url
+            except Exception:
+                pass
     return Limiter(
         key_func=get_remote_address,
         storage_uri=storage_uri,

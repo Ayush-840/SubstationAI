@@ -8,8 +8,27 @@ from app.core.security import get_current_user
 from app.schemas import EquipmentClassResponse, TestResponse, TestDetailResponse
 from app.catalog.lookup import CatalogLookup
 from app.api.deps import ListingParams
+from app.cache.redis_cache import (
+    get_catalog_list,
+    set_catalog_list,
+    get_catalog_all_cached,
+    set_catalog_all_cached,
+    invalidate_catalog_cache,
+)
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
+
+
+def _serialize_test(test) -> dict:
+    """Convert SQLAlchemy Test model to dict for caching."""
+    return {
+        "id": test.id,
+        "name": test.name,
+        "aliases": test.aliases,
+        "category": test.category,
+        "purpose": test.purpose,
+        "summary": test.summary,
+    }
 
 
 @router.get("/equipment", response_model=List[EquipmentClassResponse])
@@ -27,6 +46,17 @@ def get_tests(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Try cache first
+    cached = get_catalog_list(
+        equipment=listing.equipment,
+        page=listing.page,
+        page_size=listing.limit,
+        sort=listing.sort,
+        q=listing.q,
+    )
+    if cached:
+        return cached
+
     catalog = CatalogLookup(db)
 
     if listing.equipment:
@@ -55,6 +85,19 @@ def get_tests(
     # Apply pagination (shared dependency — Day 2 B).
     total = ordered.count()
     rows = ordered.offset(listing.offset).limit(listing.limit).all()
+
+    # Serialize before caching
+    serialized_rows = [_serialize_test(r) for r in rows]
+
+    # Cache the result (fire and forget)
+    set_catalog_list(
+        equipment=listing.equipment,
+        page=listing.page,
+        page_size=listing.limit,
+        sort=listing.sort,
+        q=listing.q,
+        data=serialized_rows,
+    )
 
     return rows
 

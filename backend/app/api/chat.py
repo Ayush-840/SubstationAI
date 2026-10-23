@@ -15,6 +15,7 @@ from app.core.security_middleware import get_limiter
 from app.schemas import ChatRequest, ChatResponse, ConversationDoc, MessageDoc
 from app.nlp.intent import intent_classifier
 from app.rag.assembler import AnswerAssembler, stream_answer
+from app.cache.redis_cache import get_cached_answer, set_cached_answer
 
 limiter = get_limiter()
 
@@ -258,10 +259,19 @@ async def chat(
     if request.equipment and not understanding.equipment:
         understanding.equipment = request.equipment
 
-    started = time.perf_counter()
-    assembler = AnswerAssembler(db)
-    result = assembler.assemble(understanding, history_text)
-    latency_ms = int((time.perf_counter() - started) * 1000)
+    # Check cache for repeated questions
+    cache_key = f"{request.message}|{request.equipment or 'none'}"
+    cached = await get_cached_answer(request.message, request.equipment)
+    if cached:
+        result = cached
+        latency_ms = 0  # Cached response
+    else:
+        started = time.perf_counter()
+        assembler = AnswerAssembler(db)
+        result = assembler.assemble(understanding, history_text)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        # Cache the answer for 1 hour
+        await set_cached_answer(request.message, request.equipment, result)
 
     assistant_msg = Message(
         conversation_id=sql_conversation_id,

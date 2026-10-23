@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import json
@@ -11,9 +11,12 @@ from app.db.mongo import get_mongo
 from app.db.mongo_repos import ConversationRepo, MessageRepo
 from app.db.models import User, Conversation, Message, ConversationMode
 from app.core.security import get_current_user
+from app.core.security_middleware import get_limiter
 from app.schemas import ChatRequest, ChatResponse, ConversationDoc, MessageDoc
 from app.nlp.intent import intent_classifier
 from app.rag.assembler import AnswerAssembler, stream_answer
+
+limiter = get_limiter()
 
 logger = logging.getLogger(__name__)
 
@@ -125,25 +128,27 @@ async def _mirror_turn_to_mongo(
 
 
 @router.post("/stream")
+@limiter.limit("30/minute")
 async def chat_stream(
-    request: ChatRequest,
+    request: Request,
+    request_body: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     mongo_db=Depends(get_mongo),
 ):
-    conversation = _get_or_create_conversation(db, request, current_user.id)
+    conversation = _get_or_create_conversation(db, request_body, current_user.id)
 
     # Snapshot plain values before streaming starts: the event generator below
     # runs after the request's SQLAlchemy session has been closed, so it must
     # never touch an ORM instance (they come back detached and expired).
     user_id = current_user.id
     sql_conversation_id = conversation.id
-    conversation_title = conversation.title or request.message[:80]
-    conversation_mode = conversation.mode.value if conversation.mode else "qa"
-    equipment = request.equipment
+    conversation_title = conversation.title or request_body.message[:80]
+    conversation_mode = conversation_mode.value if conversation_mode else "qa"
+    equipment = request_body.equipment
 
     user_msg = Message(
-        conversation_id=sql_conversation_id, role="user", content=request.message
+        conversation_id=sql_conversation_id, role="user", content=request_body.message
     )
     db.add(user_msg)
     db.commit()
@@ -159,9 +164,9 @@ async def chat_stream(
     )
     history_text = [f"{m.role}: {m.content}" for m in history[-8:]]
 
-    understanding = intent_classifier.classify(request.message, history_text)
-    if request.equipment and not understanding.equipment:
-        understanding.equipment = request.equipment
+    understanding = intent_classifier.classify(request_body.message, history_text)
+    if request_body.equipment and not understanding.equipment:
+        understanding.equipment = request_body.equipment
 
     assembler = AnswerAssembler(db)
     started = time.perf_counter()

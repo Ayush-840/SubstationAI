@@ -17,6 +17,7 @@ from app.schemas import (
     FaultLogDoc,
 )
 from app.catalog.lookup import CatalogLookup
+from app.tools.result_checker import check_result as check_result_service
 
 router = APIRouter(prefix="/api", tags=["diagnosis", "result_check"])
 logger = logging.getLogger(__name__)
@@ -212,60 +213,39 @@ def check_result(
     if not matched_limit:
         matched_limit = limits[0]
 
-    # Qualitative limit: criterion_text/value_text only, no numeric bounds
-    # (e.g. "no visible tracking on the surface"). There is nothing to
-    # compare numerically, so return the criterion directly.
-    if matched_limit.min_val is None and matched_limit.max_val is None:
-        return CheckResultResponse(
-            status="see criterion",
-            limit_value=matched_limit.value_text,
-            source=f"Test Catalog (condition: {matched_limit.condition_note or 'general'})",
-            troubleshooting=[],
-        )
+    result = check_result_service(
+        measured_value=request.measured_value,
+        min_val=matched_limit.min_val,
+        max_val=matched_limit.max_val,
+        value_text=matched_limit.value_text,
+        unit=matched_limit.unit,
+        condition_note=matched_limit.condition_note,
+    )
 
-    status = "within limits"
-    if (
-        matched_limit.min_val is not None
-        and request.measured_value < matched_limit.min_val
-    ):
-        status = "outside limits"
-    elif (
-        matched_limit.max_val is not None
-        and request.measured_value > matched_limit.max_val
-    ):
-        status = "outside limits"
-    elif (
-        matched_limit.min_val is not None
-        and abs(request.measured_value - matched_limit.min_val) / matched_limit.min_val
-        < 0.1
-    ):
-        status = "borderline"
-    elif (
-        matched_limit.max_val is not None
-        and abs(request.measured_value - matched_limit.max_val) / matched_limit.max_val
-        < 0.1
-    ):
-        status = "borderline"
-
-    troubleshooting = []
-    if status == "outside limits":
+    # Add troubleshooting for outside limits
+    if result["status"] == "outside limits":
         ts_records = (
             db.query(Troubleshooting)
             .filter(Troubleshooting.test_id == request.test_id)
             .all()
         )
-        for ts in ts_records:
-            troubleshooting.append(
-                {
-                    "symptom": ts.symptom,
-                    "cause": ts.probable_cause,
-                    "action": ts.recommended_action,
-                }
-            )
+        result["troubleshooting"] = [
+            {
+                "symptom": ts.symptom,
+                "cause": ts.probable_cause,
+                "action": ts.recommended_action,
+            }
+            for ts in ts_records
+        ]
 
-    return CheckResultResponse(
-        status=status,
-        limit_value=f"{matched_limit.value_text} {matched_limit.unit}",
-        source=f"Test Catalog (condition: {matched_limit.condition_note or 'general'})",
-        troubleshooting=troubleshooting,
-    )
+    return CheckResultResponse(**result)
+
+
+@router.post("/tools/check-result", response_model=CheckResultResponse)
+def check_result_tools(
+    request: CheckResultRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Result Checker endpoint under /tools prefix (Day 8 C)."""
+    return check_result(request, current_user, db)

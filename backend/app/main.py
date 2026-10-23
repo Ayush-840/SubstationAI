@@ -7,6 +7,7 @@ from app.db.migrate import migrate_user_roles
 from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback
 from app.api.v1 import api_router
 from app.db.mongo import get_mongo, close_mongo, ensure_indexes
+from app.core.security_middleware import add_security_middleware, apply_rate_limits
 
 settings = get_settings()
 
@@ -56,24 +57,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-import os
+# Add security middleware (CORS, rate limiting, security headers)
+add_security_middleware(app)
 
-# Allow the configured FRONTEND_URL plus any Vercel preview deployment.
-_cors_origins = [settings.FRONTEND_URL]
-_vercel_url = os.environ.get("VERCEL_URL", "")
-if _vercel_url:
-    _cors_origins.append(f"https://{_vercel_url}")
-# Also allow the *.vercel.app wildcard for preview deployments.
-_cors_origins.append("https://*.vercel.app")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Apply rate limits to sensitive endpoints
+apply_rate_limits(app)
 
 app.include_router(api_router)
 for legacy_router in LEGACY_ROUTERS:

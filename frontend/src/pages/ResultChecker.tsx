@@ -60,7 +60,7 @@ export default function ResultChecker() {
     try {
       const value = parseFloat(measuredValue)
       if (!Number.isFinite(value)) throw new Error('Enter a valid number.')
-      const res = await api.post<CheckResultResponse>('/api/check-result', {
+      const res = await api.post<CheckResultResponse>('/api/tools/check-result', {
         test_id: selectedTest,
         parameter,
         measured_value: value,

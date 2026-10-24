@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (core + heavy; the app imports from both)
+COPY backend/requirements.txt backend/requirements-heavy.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt
 
 # Copy application code
 COPY backend/ ./

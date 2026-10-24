@@ -38,6 +38,9 @@ reportlab==4.2.2
 # requirements-heavy.txt — install separately if needed.
 #   pip install -r requirements-heavy.txt
 
+# Redis (required: rate limiting, caching, token deny-list, ARQ worker)
+redis>=5.0.0
+
 # Dev / test
 pytest==8.2.0
 ruff==0.4.0

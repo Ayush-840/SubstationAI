@@ -11,11 +11,9 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-# NOTE: heavy deps (chromadb, sentence-transformers, spacy) are optional — see requirements-heavy.txt
-# cache-bust: 2026-10-21T06:40Z
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (core + heavy; the app imports from both)
+COPY requirements.txt requirements-heavy.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt
 
 # Copy application
 COPY . .

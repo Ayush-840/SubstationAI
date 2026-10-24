@@ -1,8 +1,23 @@
-# DB.md — Database Design (SQL + ORM + MongoDB)
+# DB.md — SubstationIQ data evidence pack
 
-Submit this file with `db/schema.sql` as the evidence pack for the DBMS rubric. Each section maps to one rubric (A = SQL, B = ORM, C = MongoDB). The final DBMS score is the **average of the three**, so none of them can be weak.
+Submit this file with `schema.sql` as the evidence pack for the DBMS rubric.
+The final DBMS score is the **average of the three rubrics**, so none of them
+can be weak.
 
-**Not graded (do not spend time on):** normalization theory, ACID, query optimisation, indexing.
+**Not graded (do not spend time on):** normalization theory, ACID, query
+optimisation, indexing.
+
+**Actual stack (not the idealized one in older TRD drafts):**
+
+- **Primary relational store:** SQLite (dev/local) — the app ships with
+  `backend/app/db/models.py` (SQLAlchemy 2.0) and runs on SQLite by default.
+  `schema.sql` is the equivalent PostgreSQL DDL submitted as evidence; the
+  rubric cares about the model, constraints, and queries, not which engine
+  the deployed container happens to use.
+- **Secondary document store:** MongoDB 7 via Motor (async). Chat history,
+  feedback, and fault logs. **MongoDB is the system of record for
+  `fault_logs` — that collection has no SQLite table.**
+- **Cache / deny-list / rate-limit backend:** Redis 7.
 
 ---
 
@@ -10,65 +25,87 @@ Submit this file with `db/schema.sql` as the evidence pack for the DBMS rubric. 
 
 | Store | Holds | Reason |
 |---|---|---|
-| **PostgreSQL 16 + pgvector** | Users, sessions, the test catalog, standards, documents, chunks (text + embeddings), procedure runs | Strongly related, constrained data: many-to-many links, keys, checks. Ideal for ER modeling, joins, aggregation |
-| **MongoDB 7** | Conversations and messages, feedback, unanswered queries, fault logs, quiz attempts, audit events | Semi-structured, write-heavy, shape varies (citations arrays, variable meter readings, embedded quiz questions) |
-| **Redis** | Cache, rate-limit counters, token deny-list, job queue | Not a scored database; supports ASD "advanced capabilities" |
+| **SQLite / PostgreSQL** | Users, refresh tokens, the test catalog, standards, documents, sources, chunks, conversations (SQLite mirror), messages (SQLite mirror), feedback (SQLite mirror), procedure runs, quiz attempts, unanswered queries | Strongly related, constrained data: foreign keys, unique constraints, checks, enums. Ideal for ER modeling, joins, aggregation. |
+| **MongoDB 7** | Conversations, messages, feedback, fault logs (system of record) | Write-heavy, shape varies (citations arrays, variable meter readings, embedded quiz questions), history is paged reads. |
+| **Redis 7** | Catalog/answer cache, rate-limit counters, access-token deny-list, ARQ worker backend | Not a scored database; backs the advanced-capabilities rubric. |
+
+MongoDB is **secondary and best-effort** for everything except `fault_logs`:
+`app/db/mongo.py` probes the server with a 1.5 s timeout and backs off for 30 s
+on failure, so MongoDB can be down without taking the API down. Every
+Mongo-backed endpoint falls back to the SQLite mirror when the probe reports
+unreachable.
+
+---
 
 ## 2. Rubric A: Relational (SQL)
 
-### 2.1 ER diagram (Crow's Foot, Mermaid)
+### 2.1 ER diagram
+
+The real model lives in `backend/app/db/models.py`. The equivalent PostgreSQL
+DDL is in `schema.sql` (this repo root). The diagram below is the Crow's Foot
+view of that DDL.
 
 ```mermaid
 erDiagram
     USERS ||--o{ REFRESH_TOKENS : has
-    USERS ||--o{ PROCEDURE_RUNS : performs
     USERS ||--o{ DOCUMENTS : uploads
+    USERS ||--o{ QUIZ_ATTEMPTS : attempts
     EQUIPMENT_CLASSES ||--o{ TESTS : contains
-    EQUIPMENT_CLASSES ||--o{ DOCUMENTS : "tagged for"
     EQUIPMENT_CLASSES ||--o{ SAFETY_PRECAUTIONS : "scoped to"
     TESTS ||--o{ TEST_STEPS : "has ordered"
     TESTS ||--o{ TEST_LIMITS : "has"
+    TESTS ||--o{ TEST_INSTRUMENTS : uses
+    TESTS ||--o{ TEST_STANDARDS : "follows"
     TESTS ||--o{ TROUBLESHOOTING : "has"
     TESTS ||--o{ SAFETY_PRECAUTIONS : "scoped to"
-    TESTS ||--o{ TEST_INSTRUMENTS : uses
+    TESTS ||--o{ PROCEDURE_RUNS : "executed as"
     INSTRUMENTS ||--o{ TEST_INSTRUMENTS : "used in"
-    TESTS ||--o{ TEST_STANDARDS : "follows"
     STANDARDS ||--o{ TEST_STANDARDS : "applies to"
     STANDARDS ||--o{ TEST_LIMITS : "defines"
     SOURCES ||--o{ TEST_LIMITS : "supports"
     SOURCES ||--o{ TEST_STEPS : "supports"
     DOCUMENTS ||--o{ SOURCES : "cited as"
     DOCUMENTS ||--o{ CHUNKS : "split into"
-    TESTS ||--o{ PROCEDURE_RUNS : "executed as"
-    PROCEDURE_RUNS ||--o{ PROCEDURE_RUN_STEPS : records
-    TEST_STEPS ||--o{ PROCEDURE_RUN_STEPS : "checked in"
+    CHUNKS ||--|| DOCUMENTS : belongs_to
 ```
 
-Draw the final version in draw.io or dbdiagram.io from `schema.sql` and export a PNG into `docs/er-diagram.png` for the report.
+Draw the final version from `schema.sql` in draw.io / dbdiagram.io and export a
+PNG into `docs/er-diagram.png` if the report needs an image. The source of
+truth is `schema.sql`, not the diagram.
 
-### 2.2 Data dictionary (short form)
+### 2.2 Data dictionary (actual tables)
 
 | Table | Purpose | Key constraints |
 |---|---|---|
-| `users` | Accounts and role | `email` UNIQUE, `role` enum |
+| `users` | Accounts and role | `email` UNIQUE, `role` enum (`trainee \| engineer \| admin`) |
 | `refresh_tokens` | Session persistence with expiry and revocation | hashed token UNIQUE, `expires_at > created_at` |
-| `equipment_classes` | Transformer, Reactor, Circuit Breaker, Instrument Transformer, Surge Arrester | `name`, `slug` UNIQUE |
-| `tests` | A maintenance test on an equipment class | UNIQUE(class, slug); verified rows need verifier + timestamp |
+| `equipment_classes` | Transformer, Reactor, Circuit Breaker, Instrument Transformer, Surge Arrester | `name` UNIQUE |
+| `tests` | A maintenance test on an equipment class | UNIQUE(equipment_class, slug); verified rows need verifier + timestamp |
 | `test_steps` | Ordered steps (safety / prep / action / record) | UNIQUE(test, step_no), `step_no > 0` |
 | `instruments` + `test_instruments` | Test equipment; N:N with tests | composite PK |
 | `standards` + `test_standards` | IEC/IEEE/IS/CBIP/CEA references; N:N with tests | `code` UNIQUE, composite PK |
-| `test_limits` | Acceptable values with units and conditions | `source_id NOT NULL`, `min <= max`, at least one criterion |
+| `test_limits` | Acceptable values with units and conditions | `source_id NOT NULL`, at least one of min/max/criterion, `min <= max` when both present, CHECK ties `scope` correctly |
 | `safety_precautions` | General, per-equipment or per-test safety text | CHECK ties `scope` to the right foreign key |
 | `troubleshooting` | Symptom, probable cause, action | FK to test |
 | `synonyms` | Abbreviation and synonym expansion for NLP | UNIQUE(variant, kind) |
 | `documents`, `sources`, `chunks` | Uploaded files, citable locations, retrieval chunks | chunk UNIQUE(document, index) |
-| `procedure_runs`, `procedure_run_steps` | A user's guided run and per-step confirmations | `checked` requires `checked_at`; UNIQUE(run, step) |
+| `procedure_runs` | A user's guided run | FK to user + test, completed implies completed_at |
+| `quiz_attempts` | Learn-mode quiz results | FK to user |
+
+**Not present in the real app (do not cite these as live tables):**
+`unanswered_queries` is referenced by the admin analytics endpoint conceptually
+but is not a long-lived scored collection here; `procedure_run_steps` is not a
+real table — procedure step state lives inside `procedure_runs.steps_state_json`.
+Any older TRD draft that lists them as live tables is wrong.
+
+**DML that respects integrity:** deleting a test cascades to its steps, limits,
+troubleshooting and safety rows; it is blocked (`RESTRICT`) if any
+`procedure_runs` reference it. Users are never hard-deleted, so
+MongoDB documents that store `user_id` never dangle.
 
 ### 2.3 Representative queries used by the application
 
-Keep these in `backend/app/db/queries/analytics.sql` (or `.py`) and reference each from the feature that calls it.
-
-**Q1. Full test record (JOIN across five tables), used by `GET /api/v1/tests/{id}`**
+**Q1. Full test record (JOIN across five tables), used by `GET /api/catalog/tests/{test_id}` / `GET /api/v1/tests/{test_id}`**
 ```sql
 SELECT t.id, t.name, ec.name AS equipment,
        s.step_no, s.step_type, s.text AS step_text,
@@ -135,7 +172,21 @@ FROM standards st JOIN test_standards ts ON ts.standard_id = st.id
 GROUP BY st.id ORDER BY tests_using DESC;
 ```
 
-**Q7. Hybrid retrieval with Reciprocal Rank Fusion (vector + full-text)**
+**Q7. Admin analytics aggregation (the real one the app runs today, `GET /api/admin/analytics`)**
+```sql
+SELECT COUNT(*) FROM messages WHERE role = 'user';                                  -- total user queries
+SELECT AVG(rating) FROM feedback;                                                  -- average rating
+SELECT COUNT(*) FROM unanswered_queries;                                           -- unanswered count
+SELECT content, COUNT(*) FROM messages WHERE role = 'user'
+GROUP BY content ORDER BY COUNT(*) DESC LIMIT 10;                                  -- top questions
+```
+
+The admin analytics endpoint (`GET /api/admin/analytics`, admin-only) runs
+exactly these shapes against the SQLite `Message`, `Feedback` and
+`UnansweredQuery` tables and returns them as `AnalyticsResponse`.
+
+**Q8. Hybrid retrieval with Reciprocal Rank Fusion (vector + full-text)** — the
+idealized pgvector query the retrieval design targets:
 ```sql
 WITH vec AS (
   SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> :qvec) AS r
@@ -156,72 +207,116 @@ WHERE vec.id IS NOT NULL OR kw.id IS NOT NULL
 ORDER BY score DESC LIMIT 20;
 ```
 
-**DML that respects integrity:** deleting a test cascades to its steps, limits, troubleshooting and safety rows; it is *blocked* (`RESTRICT`) if any `procedure_runs` reference it. Deleting a user is a soft delete (`is_active = false`) so MongoDB documents that store `user_id` never dangle.
+Be ready to write live in the viva: a join across three tables, a GROUP BY with
+HAVING, a NOT EXISTS subquery, and a CTE, all against this schema.
 
-### 2.4 Be ready to write live in the viva
-Practice writing, from memory: a join across three tables, a GROUP BY with HAVING, a NOT EXISTS subquery, and a CTE, all against this schema.
+### 2.4 Raw SQL is used here and only here
+
+The analytics and hybrid-retrieval queries above are executed as raw SQL
+(`session.execute(text(...))`) because they are multi-table reports or use
+pgvector/text-search operators that read more clearly as SQL. Everything else
+goes through the ORM.
+
+---
 
 ## 3. Rubric B: ORM (SQLAlchemy 2.0)
 
-- **Models mirror the DDL** one-to-one in `backend/app/db/models/` (one file per aggregate: `user.py`, `catalog.py`, `documents.py`, `runs.py`). Field types, nullability, defaults and enums match `schema.sql`.
-- **CRUD only through the ORM** in repository classes (`TestRepository.create/get/list/update/delete`), using `select()`, `.where()`, `.order_by()`, `.limit()/.offset()` for filtering, sorting, pagination.
-- **Relationships declared:**
-  - 1:N: `EquipmentClass.tests`, `Test.steps`, `Test.limits`, `Test.troubleshooting`
-  - N:N: `Test.instruments` via `test_instruments`, `Test.standards` via `test_standards`
-  - 1:1-style: `User.refresh_tokens` (1:N), `ProcedureRun.steps`
-- **Loading:** `selectinload` for the test detail page (avoids N+1 without SQL tuning talk); lazy loading elsewhere.
-- **Cascades:** `cascade="all, delete-orphan"` on `Test.steps/limits/troubleshooting`, matching `ON DELETE CASCADE` in the DDL.
-- **Model-level validation:** Pydantic schemas for request bodies plus SQLAlchemy `CheckConstraint` and `Enum` types.
-- **Migrations:** Alembic (`alembic revision --autogenerate`, `alembic upgrade head`). Be ready to explain how adding a column flows from model to migration to database.
-- **Where raw SQL is used and why:** the analytics and hybrid-retrieval queries in section 2.3, executed with `session.execute(text(...))`, because they are multi-table reports or use pgvector operators that read more clearly as SQL. Everything else goes through the ORM.
+- **Models mirror the DDL** one-to-one in `backend/app/db/models.py`. Field
+  types, nullability, defaults and enums match `schema.sql`.
+- **CRUD through the ORM** via repository-style helpers (`CatalogLookup` for
+  the catalog, the chat/feedback/fault-log paths for Mongo, `admin.py` for
+  documents). Reads use `select()`/`query()` with `.filter()`,
+  `.order_by()`, `.limit()/.offset()` for filtering, sorting, pagination.
+- **Relationships declared:** 1:N `EquipmentClass.tests`, `Test.steps`,
+  `Test.limits`, `Test.troubleshooting`; N:N `Test.instruments` via
+  `test_instruments`, `Test.standards` via `test_standards`; 1:N
+  `User.refresh_tokens`, `ProcedureRun.user`.
+- **Loading:** the test detail page assembles in one catalog-lookup call to
+  avoid N+1; lazy loading elsewhere.
+- **Cascades:** `cascade="all, delete-orphan"` on `Test.steps/limits/troubleshooting/`,
+  matching `ON DELETE CASCADE` in the DDL.
+- **Model-level validation:** Pydantic request schemas plus SQLAlchemy
+  `CheckConstraint` and `Enum` types.
+- **Migrations:** Alembic (`alembic upgrade head`). The one real migration
+  widens `users.role` from the legacy `user|admin` vocabulary to
+  `trainee|engineer|admin` and remaps legacy `user` rows to `trainee`
+  (`backend/app/db/migrate.py`, `alembic/`).
+- **Where raw SQL is used and why:** section 2.3 only.
 
-## 4. Rubric C: MongoDB (PyMongo/Motor, no ODM)
+---
 
-Use Motor (async PyMongo) directly with Pydantic models. Skipping an ODM keeps this scored under Rubric C only, so nothing is scored twice.
+## 4. Rubric C: MongoDB (Motor, no ODM)
+
+Motor (async PyMongo) directly with Pydantic models. No ODM — that keeps this
+scored under Rubric C only.
 
 ### 4.1 Collections and design choices
 
 | Collection | Shape | Embed or reference (and why) |
 |---|---|---|
-| `conversations` | `{_id, user_id, title, mode, equipment, created_at, updated_at}` | Lightweight header; messages are kept separate |
-| `messages` | `{_id, conversation_id, role, content, intent, entities, citations[], confidence, source_type, latency_ms, created_at}` | **Reference** the conversation because a chat can grow long and messages are read in pages. **Embed** `citations[]` because they belong to one message and are always read with it |
-| `feedback` | `{_id, message_id, user_id, rating, comment, created_at}` | **Reference** the message; feedback is created and queried independently |
-| `unanswered_queries` | `{_id, query, intent, equipment, top_score, count, first_seen, last_seen}` | Self-contained; upsert increments `count` for repeats |
-| `fault_logs` | `{_id, equipment_class, equipment_tag, symptoms[], readings{...}, diagnosis, resolution, logged_at}` | `readings` differs by equipment (dissolved gas values for a transformer, SF6 pressure for a breaker), which suits documents better than fixed columns |
-| `quiz_attempts` | `{_id, user_id, equipment_class, questions:[{q, options[], correct, chosen}], score, total, created_at}` | **Embed** questions because they only make sense inside the attempt |
-| `audit_events` | `{_id, user_id, action, target, at, meta{}}` | Append-only log |
+| `conversations` | `{_id, sql_id, user_id, title, mode, equipment, created_at, updated_at}` | **reference** to messages; header-only so the history list stays a cheap paged read |
+| `messages` | `{_id, conversation_id, sql_id, role, content, intent, entities, citations[], confidence, created_at}` | **reference** the conversation (pages can be long); **embed** `citations[]` because they are always read with the message |
+| `feedback` | `{_id, message_id, user_id, rating, comment, created_at}` | **reference** the message; written/read by `(message, user)`; unique index enforces one vote per user per message |
+| `fault_logs` | `{_id, user_id, equipment_class, symptoms[], readings{}, diagnosis, resolution, logged_at}` | **embed** `readings{}` + `symptoms[]` — readings vary by equipment (ppm vs kV vs µΩ); no SQLite table, so this is the system of record |
 
-### 4.2 Sample documents (include in the report)
+Indexes created at startup in `ensure_indexes()` (`app/db/mongo.py`):
+`conversations.sql_id`, `(user_id, created_at)`; `messages.sql_id`,
+`conversation_id`; unique `(message_id, user_id)` on `feedback`;
+`(user_id, logged_at)` on `fault_logs`.
 
-```json
-// messages
+### 4.2 Sample documents (mongosh format)
+
+```js
+// conversations — header only, sql_id bridges to the SQLite row
 {
-  "_id": "ObjectId(...)",
-  "conversation_id": "ObjectId(...)",
-  "role": "assistant",
-  "intent": "limits",
-  "entities": {"equipment": "Circuit Breaker", "test": "Contact Resistance"},
-  "content": "...",
-  "citations": [{"n": 1, "document_id": 12, "page": 14, "section": "Test limits"}],
-  "confidence": 0.86,
-  "source_type": "catalog+rag",
-  "latency_ms": 2140,
-  "created_at": "2026-10-04T10:21:00Z"
+  _id: ObjectId("652f1c8a9d3b2e77c1a40001"),
+  sql_id: 41,
+  user_id: 2,
+  title: "Contact resistance limits?",
+  mode: "qa",
+  equipment: "Circuit Breaker",
+  created_at: ISODate("2026-10-16T10:12:03Z"),
+  updated_at: ISODate("2026-10-16T10:13:40Z")
+}
+
+// messages — citations embedded, conversation referenced by ObjectId
+{
+  _id: ObjectId("652f1d3b9d3b2e77c1a40002"),
+  conversation_id: ObjectId("652f1c8a9d3b2e77c1a40001"),
+  sql_id: 118,
+  role: "assistant",
+  content: "The acceptable contact resistance per pole is 50 µΩ …",
+  intent: "limit",
+  entities: { equipment: "Circuit Breaker" },
+  citations: [
+    { document: "CB Maintenance Manual", page: 12, section: "Contact resistance" }
+  ],
+  confidence: 0.86,
+  created_at: ISODate("2026-10-16T10:12:04Z")
+}
+
+// feedback — message referenced as an ObjectId (see the $lookup note below)
+{
+  _id: ObjectId("652f20119d3b2e77c1a40003"),
+  message_id: ObjectId("652f1d3b9d3b2e77c1a40002"),
+  user_id: 2,
+  rating: -1,
+  comment: "answer missed the CT ratio",
+  created_at: ISODate("2026-10-16T10:14:11Z")
+}
+
+// fault_logs — free-form readings embedded, no SQLite counterpart
+{
+  _id: ObjectId("652f30449d3b2e77c1a40004"),
+  user_id: 2,
+  equipment_class: "Power Transformer",
+  symptoms: ["oil temperature rising", "moisture high dew point"],
+  readings: { free_text: "H2 = 145 ppm, tan delta = 1.9%" },
+  diagnosis: "[DGA] Gas ratio indicates thermal fault …",
+  resolution: "Sample oil and retest after 48h",
+  logged_at: ISODate("2026-10-16T11:02:55Z")
 }
 ```
-```json
-// fault_logs
-{
-  "equipment_class": "Power Transformer",
-  "equipment_tag": "TR-2",
-  "symptoms": ["high winding temperature", "gas alarm"],
-  "readings": {"H2_ppm": 0, "CH4_ppm": 0, "C2H2_ppm": 0, "oil_temp_c": 0},
-  "diagnosis": "…",
-  "resolution": "…",
-  "logged_at": "2026-09-30T08:00:00Z"
-}
-```
-_(Numbers above are placeholders for the shape; the seed script generates realistic synthetic values.)_
 
 ### 4.3 Operations used by the app
 
@@ -234,7 +329,6 @@ cursor = db.messages.find({"conversation_id": cid}, {"content": 1, "role": 1, "c
                     .sort("created_at", 1).skip(offset).limit(limit)
 
 # update with operators
-await db.unanswered_queries.update_one({"query": q}, {"$inc": {"count": 1}, "$set": {"last_seen": now}}, upsert=True)
 await db.conversations.update_one({"_id": cid, "user_id": uid}, {"$set": {"title": t, "updated_at": now}})
 
 # delete (owner only)
@@ -243,7 +337,13 @@ await db.conversations.delete_one({"_id": cid, "user_id": uid})
 
 **Aggregations**
 
-> `$lookup` matches on exact BSON type. `feedback.message_id` must be stored as an `ObjectId` — the same type as `messages._id` — not as a string. If it's inserted as a string (easy to do if the API accepts it as a path param and passes it straight through), the `$lookup` below returns an empty array for every document with no error, and `avg_rating` comes back `null` for everything. Convert with `ObjectId(message_id)` at the repository boundary before any write.
+> `$lookup` matches on exact BSON type. `feedback.message_id` must be stored as
+> an `ObjectId` — the same type as `messages._id` — not as a string. If it is
+> inserted as a string (easy to do if the API accepts it as a path param and
+> passes it straight through), the `$lookup` below returns an empty array for
+> every document with no error, and `avg_rating` comes back `null` for
+> everything. Convert with `ObjectId(message_id)` at the repository boundary
+> before any write (`to_object_id()` in `app/db/mongo_repos.py`).
 
 ```python
 # Average feedback rating per equipment (joins across collections with $lookup)
@@ -268,16 +368,97 @@ await db.conversations.delete_one({"_id": cid, "user_id": uid})
 ]
 ```
 
-Optional: a JSON Schema validator on `messages` and `quiz_attempts` (`db.create_collection(..., validator={...})`) to show consistent document shapes.
-
 ### 4.4 Keeping SQL and MongoDB consistent
-- Mongo documents store `user_id`, `test_id` and `equipment_class` as plain values from Postgres; there are no cross-database foreign keys.
+
+- Mongo documents store `user_id`, `test_id` and `equipment_class` as plain
+  values from SQLite; there are no cross-database foreign keys.
 - Users are never hard-deleted, so those ids never dangle.
-- Catalog facts are never copied into Mongo; messages store only ids and citations. The catalog stays the single source of truth for limits.
-- If a test is renamed, old messages still read correctly because they store `test_id` and the name at the time is only display text.
+- Catalog facts are never copied into Mongo; messages store only ids and
+  citations. The catalog stays the single source of truth for limits.
+- Every mirrored document also carries `sql_id`, the SQLite primary key, so the
+  API can keep returning the integer ids it returned before MongoDB existed
+  (the eval harness and the frontend contract do not change).
+- Repositories translate `sql_id` ↔ `ObjectId` at the boundary in
+  `to_object_id()` (`app/db/mongo_repos.py`), never in an endpoint.
 
 ### 4.5 Why MongoDB here (viva answer)
-Chat logs, feedback and fault logs are write-heavy, grow steadily, and have varying shapes. A document model fits them without schema changes for every new reading type. The catalog is the opposite: strongly related and constrained, so it lives in SQL.
+
+Chat logs, feedback and fault logs are write-heavy, grow steadily, and have
+varying shapes. A document model fits them without schema changes for every new
+reading type. The catalog is the opposite: strongly related and constrained, so
+it lives in SQL. `fault_logs` is the clearest example: transformer DGA readings,
+breaker SF6 pressures, and resurgence readings all have different shapes, and
+the collection is the system of record.
+
+---
 
 ## 5. Seed data (both stores)
-`python -m app.scripts.seed` loads: 5 equipment classes, 40+ tests with steps, limits, instruments and standards, about 300 synonyms, demo users for each role, about 50 sample conversations, 100 synthetic fault logs, and sample documents. Realistic seed data is an explicit ASD criterion.
+
+`python -m app.scripts.seed` loads: 5 equipment classes, 40+ tests with steps,
+limits, instruments and standards, about 300 synonyms, demo users for each role
+(trainee, engineer, admin), and synthetic history. Realistic seed data is an
+explicit ASD criterion. Run it once at startup in the Docker image and in
+`docker-compose.yml` (idempotent — it never touches existing rows).
+
+Demo accounts (from `backend/app/scripts/seed.py`):
+
+| Role | Email | Password |
+|---|---|---|
+| Trainee | demo@substationiq.dev | demo1234 |
+| Engineer | engineer@substationiq.dev | engineer1234 |
+| Admin | admin@substationiq.dev | admin1234 |
+
+---
+
+## 6. Ownership and access control (the rules the app enforces)
+
+These are the rules a grader can reproduce from the code and tests:
+
+- **Auth:** JWT access token (`jti` deny-listed on logout) + hashed refresh
+  token rotation. `POST /api/auth/login`, `/refresh`, `/logout`,
+  `/me`. `POST /api/auth/register` defaults new accounts to `trainee`.
+- **Role model:** `users.role` is an enum of `trainee | engineer | admin`
+  (migrated from the legacy `user | admin`). Demo engineer and admin accounts
+  are seeded.
+- **Role gates:** `/api/diagnosis` (and the DGA path it covers) require
+  `engineer` or `admin` (`require_role(UserRole.ENGINEER, UserRole.ADMIN)` —
+  `app/api/diagnosis.py`). Admin-only paths: `/api/admin/*`.
+- **Ownership checks:** conversation, message, feedback and procedure-run reads
+  and writes are scoped to `current_user.id`. A user cannot read, vote on, or
+  complete another user's conversation / procedure run. Tested in
+  `backend/tests/test_api.py` (ownership blocks other users).
+- **Feedback rule:** a vote only lands on the caller's own messages (same
+  conversation ownership rule). A vote on a foreign message returns 404.
+
+---
+
+## 7. API conventions (TRD §3.5, as implemented)
+
+- **Base path:** `/api/v1` is mounted alongside the legacy `/api/...` routes
+  during the sprint; the legacy paths keep working until migration is complete.
+  Both are included in `app/main.py`.
+- **Pagination/filtering/sorting:** shared `ListingParams` dependency
+  (`app/api/deps.py`) with `page`, `page_size`, `sort` (leading `-` for desc),
+  `equipment`, `q`. Applied on `GET /api/v1/tests` (and legacy
+  `/api/catalog/tests`).
+- **Envelope:** list endpoints return the data directly in this codebase
+  (the legacy paths predate the envelope convention); the TRD's envelope
+  language is the target convention, not yet universal. Do not cite a blanket
+  envelope rule that the code does not yet follow.
+
+---
+
+## 8. Notes and corrections to older drafts
+
+- The DB.md that says the role vocabulary is `user|admin` is outdated. The real
+  vocabulary is `trainee|engineer|admin` (Day 7).
+- The DB.md that lists `instruments`, `procedure_run_steps`, and `unanswered_queries`
+  as full scored tables is inaccurate for this repo. `instruments`/`test_instruments`
+  are real; `procedure_run_steps` is not a real table; `unanswered_queries` is a
+  small auxiliary collection, not a scored rubric table.
+- The ER diagram section that says "draw from schema.sql" is right as far as it
+  goes, but the real source of truth for the running app is `backend/app/db/models.py`.
+- The Mongo collections in the running app are `conversations`, `messages`,
+  `feedback`, `fault_logs` (plus any small auxiliary ones). Older drafts that
+  list `quiz_attempts` and `audit_events` as live scored collections are not
+  accurate here — quiz results are stored in SQLite.

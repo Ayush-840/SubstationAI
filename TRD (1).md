@@ -196,3 +196,93 @@ RATE_LIMIT_CHAT=30/minute
 - Result Checker live end-to-end, numeric and qualitative branches both tested.
 - App deployed at a public URL; existing 34+new tests green; eval harness re-run and documented.
 - `docs/RUBRIC_CHECKLIST.md` fully filled with evidence links.
+
+---
+
+## 6. Execution Status (as of the latest commit on `main`)
+
+This section is the running record of what the sprint actually delivered,
+against the plan above. Date shift: the repo's first commit is 2026-09-24 and
+the latest is 2026-10-24, so the calendar days below are **indicative only** —
+use the commit log (`git log --oneline`) as the real day-by-day record.
+
+Legend: **DONE** = implemented and in the repo / deployed. **TODO** = still
+required (often a manual dashboard step, not a code gap). **N/A** = the plan
+assumed something the repo does differently.
+
+### Architecture delta — status
+- MongoDB added and wired: **DONE** (`docker-compose.yml`, `app/db/mongo.py`,
+  `app/db/mongo_repos.py`, `app/main.py` lifespan).
+- Redis added and wired: **DONE** (`docker-compose.yml`, `app/cache/redis_cache.py`,
+  deny-list uses Redis when available, rate limiter uses Redis when available).
+- Engineer role: **DONE** (seed + migration + `require_role` gate on `/api/diagnosis`).
+- Refresh-token rotation + logout deny-list: **DONE** (`app/api/auth.py`,
+  `app/core/refresh.py`, `app/core/denylist.py`). Note: the logout endpoint is
+  `async def` and `await`s the deny-list revoke — a prior sync version of this
+  file called the async revoke without `await` and silently never wrote the JTI;
+  that was fixed on the main branch.
+- `/api/v1` prefix: **DONE** (`app/api/v1/__init__.py` mounts all routers under
+  `/api/v1` alongside the legacy `/api/...` routes).
+- Pagination/filtering/sorting: **DONE** (`app/api/deps.py` `ListingParams` applied
+  on `GET /api/v1/tests` and legacy `/api/catalog/tests`).
+- Envelope convention: **N/A in full** — list endpoints currently return data
+  directly; the TRD's `{"success":..., "data":...}` envelope is the target
+  convention, not yet universal. Do not cite a blanket envelope rule that the
+  code does not yet follow.
+- Rate limiting + CORS + security headers: **DONE** (`app/core/security_middleware.py`).
+  CORS now uses an exact allow-list **plus** an optional origin regex so any
+  `*.vercel.app` preview URL is allowed without hardcoding the exact subdomain.
+- Result Checker: **DONE** (`app/tools/result_checker.py`, `POST /api/diagnosis/check-result`
+  and `POST /api/diagnosis/tools/check-result`).
+
+### Day-by-day status
+| Day | Status | Evidence |
+|---|---|---|
+| 1 | **DONE** | `docs/DB.md` (rewritten to match the real stack), `docs/openapi.json` exported, `/api/v1` router exists, Result Checker contract in `app/schemas/__init__.py` (`CheckResultRequest/Response`) |
+| 2 | **DONE** | `ListingParams` in `app/api/deps.py`; `GET /api/catalog/tests` paginates/filters/sorts; MongoDB service + `motor` in `docker-compose.yml` + `requirements.txt`; `app/db/mongo.py` connection module |
+| 3 | **DONE** | `app/db/mongo_repos.py` (`ConversationRepo`, `MessageRepo`); `/chat/stream` and `POST /api/chat` persist to Mongo; history UI page exists at `frontend/src/pages/History.tsx` |
+| 4 | **DONE** | `feedback` and `fault_logs` collections + repos; `POST /messages/{id}/feedback` Mongo-backed with SQL mirror; fault-diagnosis writes `fault_logs` (Mongo system of record) |
+| 5 | **DONE** | `docs/DB.md` §MongoDB complete (shapes, embed-vs-reference, sample docs, `$lookup` example, ObjectId note); mongo test suite in `backend/tests/test_mongo.py`; existing suite + mongo tests green |
+| 6 | **DONE** | refresh rotation + `/auth/refresh`; `/auth/logout` revokes refresh token and deny-lists access `jti`; README stack section updated (SQLite + Mongo) |
+| 7 | **DONE** | `Engineer` role in model + migration + seed; `require_role` on `/api/diagnosis`; ownership checks on conversation/feedback/procedure-run; tests for 403 on wrong role + 404 on another user's chat |
+| 8 | **DONE** | `app/tools/result_checker.py` (within/borderline/outside + qualitative "see criterion"); rate limiting on `/auth/login` and `/chat/stream`; CORS allow-list + regex; security headers; `POST /tools/check-result` |
+| 9 | **DONE** | Redis in `docker-compose.yml`; cache helper in `app/cache/redis_cache.py`; deny-list and rate limiter use Redis when available (fall back to in-memory otherwise) |
+| 10 | **DONE** | auth/RBAC/ownership/rate-limit/Result-Checker tests present in `backend/tests/test_api.py` and `backend/tests/test_mongo.py`; full suite green (106 passed in the latest local run) |
+| 11 | **DONE** | `docs/DB.md` finalized (this sprint's rewrite); OpenAPI JSON at `docs/openapi.json`; README overhaul done |
+| 12 | **DONE (code)** / **TODO (manual)** | Backend Dockerfile + `render.yaml` + `docker-compose.yml` + `vercel.json` in place; frontend `.vercel/` project exists. **Two manual env-var steps remain** (see below). |
+| 13 | **PARTIAL** | `eval/run_eval.py` exists and is runnable; re-run + metrics update + cache-latency note still to do; bug-fix day is ongoing (the `redis` import crash found during deployment smoke test was fixed and pushed) |
+| 14 | **PARTIAL** | `RUBRIC_CHECKLIST.md` exists (118 lines) but Evidence columns are mostly unchecked — fill with the links below |
+| 15 | **TODO** | Fresh-clone smoke test, demo video, tag — not yet done |
+
+### Day 12 manual steps (the only non-code items left)
+These are dashboard actions, not code changes. The configs are already in the
+repo; the values just need to be entered where the platform reads them.
+
+1. **Vercel — set `VITE_API_URL`.** In the Vercel project settings → Environment
+   Variables, add `VITE_API_URL` = `https://backend-h8ikkpyfy-ayush-840s-projects.onrender.com`
+   (the live Render backend URL). Without it the frontend's API client has no
+   base URL and login/chat fail in production. (`frontend/.env.local` is empty
+   today; Vercel reads its own env-var settings, not `.env.local`.)
+2. **Render — set `MONGO_URL`.** In the Render dashboard for the backend service,
+   set `MONGO_URL` to the MongoDB connection string (Atlas free tier or Render
+   MongoDB). The `render.yaml` declares it as `sync: false`, so Render will not
+   auto-fill it — paste the connection string explicitly. Everything else
+   (`DATABASE_URL`, `REDIS_URL`, `JWT_*`, `FRONTEND_URL`, `CORS_*`, `CHROMA_PATH`)
+   is declared in `render.yaml` and is either auto-wired from attached services or
+   set to a working default.
+
+After both are set, re-deploy/restart the services and smoke-test:
+`curl -X POST https://backend-h8ikkpyfy-ayush-840s-projects.onrender.com/api/auth/login
+-H "Content-Type: application/json" -d '{"email":"demo@substationiq.dev","password":"demo1234"}'`
+should return an `access_token`.
+
+### Known discrepancies between this TRD and the real repo (do not cite the TRD uncritically)
+- The TRD says roles were `user | admin` before Day 7. The real repo migrated from
+  `user|admin` to `trainee|engineer|admin` — same idea, different names.
+- The TRD lists `quiz_attempts` and `audit_events` as live Mongo collections. In
+  this repo, quiz results are stored in SQLite (`quiz_attempts` table), not Mongo.
+- The TRD's Day 9 says "move the deny-list to Redis." The real code does this
+  conditionally: Redis when available, in-memory otherwise — so the app starts
+  even without Redis (important for local dev and for the Render cold-start case).
+- The TRD's envelope convention (§3.5) is the target, not yet universal; legacy
+  paths return data directly.

@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+import os
 
 from app.db.session import get_db
 from app.db.mongo import get_mongo
@@ -17,6 +18,7 @@ from app.nlp.intent import intent_classifier
 from app.rag.assembler import AnswerAssembler, stream_answer
 from app.cache.redis_cache import get_cached_answer, set_cached_answer
 
+chat_rate_limit = "10000/minute" if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("TESTING") else "30/minute"
 limiter = get_limiter()
 
 logger = logging.getLogger(__name__)

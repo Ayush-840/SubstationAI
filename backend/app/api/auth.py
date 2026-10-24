@@ -33,7 +33,10 @@ from app.schemas import (
     RefreshRequest,
     LogoutRequest,
 )
+import os
 
+# In tests, use very high rate limit to effectively disable
+login_rate_limit = "10000/minute" if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("TESTING") else "5/minute"
 limiter = get_limiter()
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -58,7 +61,7 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit(login_rate_limit)
 def login(
     request: Request,
     credentials: UserLogin,

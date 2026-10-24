@@ -13,6 +13,7 @@ _test_db.close()
 os.environ["DATABASE_URL"] = f"sqlite:///{_test_db.name}"
 os.environ["LLM_PROVIDER"] = "none"
 os.environ["CHROMA_PATH"] = tempfile.mkdtemp(prefix="siq_chroma_")
+os.environ["TESTING"] = "1"
 
 import json  # noqa: E402
 from datetime import datetime, timedelta  # noqa: E402

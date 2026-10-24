@@ -41,13 +41,13 @@ def get_equipment_classes(
 
 
 @router.get("/tests", response_model=List[TestResponse])
-def get_tests(
+async def get_tests(
     listing: ListingParams = Depends(),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     # Try cache first
-    cached = get_catalog_list(
+    cached = await get_catalog_list(
         equipment=listing.equipment,
         page=listing.page,
         page_size=listing.limit,

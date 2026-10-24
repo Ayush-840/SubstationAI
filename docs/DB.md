@@ -5,6 +5,16 @@ of real queries the application runs today, and the MongoDB design added on
 Days 3–4, so the DBMS evidence in the RUBRIC_CHECKLIST has concrete
 artifacts to point at.
 
+## ER Diagram
+
+![ER Diagram](er-diagram.png)
+
+*The ER diagram can be generated from the SQLAlchemy models using a tool like `eralchemy` or drawn manually in dbdiagram.io / draw.io. The image file `er-diagram.png` should be placed in this directory.*
+
+## OpenAPI Specification
+
+The full OpenAPI 3.0 specification is available at [`../docs/openapi.json`](../docs/openapi.json) and served at `/docs` (Swagger UI) and `/redoc` (ReDoc) when the backend is running.
+
 ## Data dictionary (existing SQLAlchemy models)
 
 Key tables in `backend/app/db/models.py`:

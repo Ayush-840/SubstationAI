@@ -83,7 +83,7 @@ Two knowledge layers work together:
 - Guided Procedure Mode with mandatory safety confirmations and PDF export.
 - Fault Diagnosis Mode: symptoms and readings leading to ranked probable causes.
 - An admin panel to upload, tag and manage documents (PDF, DOCX, TXT).
-- JWT authentication with Trainee, Engineer and Admin roles — fault diagnosis is Engineer+ (`require_role`), everyone owns their conversations, feedback and procedure runs; rotated refresh tokens, `/auth/logout` revocation.
+- JWT authentication with **Trainee, Engineer and Admin roles** — fault diagnosis and DGA are Engineer+ (`require_role`), everyone owns their conversations, feedback and procedure runs; rotated refresh tokens, `/auth/logout` revocation.
 - **Result Checker.** Compare a measured value against the catalog limits: `within limits`, `borderline`, `outside limits`, or a qualitative criterion when the catalog carries no numeric bound.
 - Feedback, analytics and an evaluation dashboard.
 
@@ -135,6 +135,7 @@ _Numeric limits always come from the cited source or the verified test catalog. 
 ![Chat](docs/screenshots/chat.png)
 ![Structured answer](docs/screenshots/structured-answer.png)
 ![Guided Procedure](docs/screenshots/procedure.png)
+![Result Checker](docs/screenshots/result-checker.png)
 ![Admin](docs/screenshots/admin.png)
 ```
 
@@ -412,6 +413,9 @@ Use a strong `JWT_SECRET` and set all variables from [Configuration](#configurat
 - [x] Guided Procedure Mode
 - [x] Fault Diagnosis with DGA interpretation rules
 - [x] Evaluation harness with intent/entity/answer metrics
+- [x] Result Checker (numeric + qualitative)
+- [x] Rate limiting, CORS, security headers
+- [x] Redis caching (catalog + chat answers)
 - [ ] Evaluation report with retrieval ablation (vector vs BM25 vs hybrid)
 - [ ] Hindi and English support
 - [ ] Voice input

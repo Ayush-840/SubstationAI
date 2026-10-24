@@ -15,10 +15,15 @@ RUN apt-get update && apt-get install -y \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application (includes backend/ and data/ from repo root)
-COPY . .
+# Copy application code
+COPY backend/ ./
+
+# Copy static data (catalog YAML + sample docs) to a path that survives
+# the Render disk mount at /app/data (which would otherwise shadow them).
+COPY data/catalog/ /app/catalog/
+COPY data/raw_docs/ /app/raw_docs/
 
 EXPOSE 8000
 
 # Seed once if the DB is empty (idempotent), then start the API.
-CMD sh -c 'cd backend && python -m app.scripts.seed || true && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'
+CMD sh -c 'python -m app.scripts.seed || true && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'

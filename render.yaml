@@ -69,13 +69,17 @@ services:
       - key: MAX_UPLOAD_MB
         value: "25"
 
-      # Frontend URL (for CORS)
+      # Frontend URL (for CORS, HSTS and link generation)
       - key: FRONTEND_URL
-        value: https://substationiq.vercel.app
+        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
 
-      # CORS allow-list (comma-separated)
+      # CORS allow-list (comma-separated, exact origins only)
       - key: CORS_ALLOW_ORIGINS
-        value: https://substationiq.vercel.app,https://*.vercel.app
+        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+
+      # CORS origin regex (optional): allows all Vercel preview subdomains
+      - key: CORS_ALLOW_ORIGIN_REGEX
+        value: 'https://.*\.vercel\.app'
 
       # Rate limiting
       - key: RATE_LIMIT_LOGIN

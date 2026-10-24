@@ -50,7 +50,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PATH=/app/data/chroma
       - FRONTEND_URL=http://localhost:5173
-      - CORS_ALLOW_ORIGINS=http://localhost:5173,https://*.vercel.app
+      - CORS_ALLOW_ORIGINS=http://localhost:5173
       - REDIS_URL=redis://redis:6379/0
       - RATE_LIMIT_LOGIN=5/minute
       - RATE_LIMIT_CHAT=30/minute
@@ -65,6 +65,8 @@ services:
       - "8000:8000"
     volumes:
       - chroma-data:/app/data
+      - ./data/catalog:/app/data/catalog
+      - ./data/raw_docs:/app/data/raw_docs
     command: >
       sh -c "alembic upgrade head &&
              python -m app.scripts.seed &&

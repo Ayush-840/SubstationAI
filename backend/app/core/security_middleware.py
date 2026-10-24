@@ -54,16 +54,29 @@ def get_cors_origins() -> list[str]:
     return ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
+def get_cors_origin_regex() -> str | None:
+    """Optional regex for CORS origins (e.g. Vercel preview subdomains).
+
+    When set, origins matching the regex are allowed in addition to the exact
+    allow_origins list. Useful for ``*.vercel.app`` preview URLs where the exact
+    subdomain is not known ahead of time.
+    """
+    settings = get_settings()
+    raw = getattr(settings, "CORS_ALLOW_ORIGIN_REGEX", "")
+    return raw.strip() or None
+
+
 def add_security_middleware(app: FastAPI) -> None:
     """Add CORS, rate limiting, and security headers to the FastAPI app."""
     settings = get_settings()
     limiter = get_limiter()
 
-    # CORS - allow-list only (no wildcard in production)
     origins = get_cors_origins()
+    allow_origin_regex = get_cors_origin_regex()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
+        allow_origin_regex=allow_origin_regex,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],

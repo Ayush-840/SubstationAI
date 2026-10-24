@@ -23,11 +23,13 @@ def _repo_root() -> Path:
 
 REPO_ROOT = _repo_root()
 
-# data/catalog: repo layout first, then Docker /app/data layout
+# data/catalog: repo layout first, then Docker /app/data layout,
+# then the static copy at /app/catalog (survives the Render disk mount).
 CATALOG_DIR = _find_dir(
     [
         REPO_ROOT / "data" / "catalog",
         Path("/app/data/catalog"),
+        Path("/app/catalog"),
         Path("data/catalog").resolve(),
     ]
 )
@@ -37,6 +39,7 @@ RAW_DOCS_DIR = _find_dir(
     [
         REPO_ROOT / "data" / "raw_docs",
         Path("/app/data/raw_docs"),
+        Path("/app/raw_docs"),
         Path("data/raw_docs").resolve(),
     ]
 )

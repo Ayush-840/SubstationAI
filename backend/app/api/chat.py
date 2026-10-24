@@ -147,7 +147,7 @@ async def chat_stream(
     user_id = current_user.id
     sql_conversation_id = conversation.id
     conversation_title = conversation.title or request_body.message[:80]
-    conversation_mode = conversation_mode.value if conversation_mode else "qa"
+    conversation_mode = conversation.mode.value if conversation.mode else "qa"
     equipment = request_body.equipment
 
     user_msg = Message(

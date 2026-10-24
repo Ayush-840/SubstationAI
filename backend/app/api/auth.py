@@ -118,7 +118,7 @@ def refresh(
 
 
 @router.post("/logout")
-def logout(
+async def logout(
     response: Response,
     db: Session = Depends(get_db),
     raw_token: str = Depends(oauth2_scheme),
@@ -141,9 +141,6 @@ def logout(
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid token")
     jti = payload.get("jti")
-    if jti:
-        exp = payload.get("exp")
-        revoke_jti(jti, float(exp) if exp is not None else None)
 
     revoked = 0
     if body is not None and body.refresh_token:
@@ -153,6 +150,10 @@ def logout(
         revoked = int(revoke_by_raw(db, refresh_cookie))
     else:
         revoked = revoke_all_for_user(db, int(user_id))
+
+    if jti:
+        exp = payload.get("exp")
+        await revoke_jti(jti, float(exp) if exp is not None else None)
 
     clear_auth_cookies(response)
     return {"ok": True, "revoked_refresh_tokens": revoked}

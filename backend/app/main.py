@@ -16,11 +16,18 @@ settings = get_settings()
 # default root config which has no handlers in the Docker container.
 import logging
 from app.core.logging import logger
+from app.core._runtime_stack_guard import check_runtime_stack
+
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
 )
+
+# Fail early if a required runtime dependency is missing. This is what makes
+# Render/Railway log the real cause ("Missing runtime dependency(s)") instead
+# of timing out on "No open ports detected".
+check_runtime_stack()
 
 # During the sprint both trees stay mounted: the legacy /api/... paths the
 # frontend and the eval harness already call, and the /api/v1 tree the sprint

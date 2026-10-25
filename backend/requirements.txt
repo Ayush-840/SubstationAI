@@ -36,6 +36,9 @@ reportlab==4.2.2
 # Redis (required: rate limiting, caching, token deny-list, ARQ worker)
 redis>=5.0.0
 
+# Rate limiting
+slowapi>=0.1.9
+
 # Dev / test
 pytest==8.2.0
 ruff==0.4.0

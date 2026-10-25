@@ -15,7 +15,10 @@ RUN apt-get update && apt-get install -y \
 # redis is imported by the token deny-list, and the heavy stack is imported
 # unconditionally by the routers and seed script).
 COPY backend/requirements.txt backend/requirements-heavy.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt
+# Fail the build (seconds) if a startup-time import is missing, instead of a
+# 15-minute runtime "no open ports" timeout on Render.
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt \
+    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, motor, chromadb, sentence_transformers, spacy, reportlab, yaml, rapidfuzz"
 
 # Copy application code
 COPY backend/ ./

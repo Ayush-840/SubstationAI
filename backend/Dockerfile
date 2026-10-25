@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (core + heavy; the app imports from both)
+# Install Python dependencies (both files are required at runtime:
+# redis is imported by the token deny-list, and the heavy stack is imported
+# unconditionally by the routers and seed script).
 COPY requirements.txt requirements-heavy.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt
 

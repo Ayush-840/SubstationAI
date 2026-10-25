@@ -33,11 +33,6 @@ rank-bm25==0.2.2
 # PDF export (guided procedure reports)
 reportlab==4.2.2
 
-# Optional heavy deps (chromadb, sentence-transformers, spacy, pymupdf,
-# pdfplumber, python-docx, pytesseract, pillow, reportlab) live in
-# requirements-heavy.txt — install separately if needed.
-#   pip install -r requirements-heavy.txt
-
 # Redis (required: rate limiting, caching, token deny-list, ARQ worker)
 redis>=5.0.0
 

@@ -13,3 +13,9 @@ python-docx==1.1.2
 pytesseract==0.3.10
 pillow==10.4.0
 reportlab==4.2.2
+
+# Note: this file was historically described as "optional heavy deps" that the
+# app would degrade gracefully without. That does not hold at import time for the
+# current codebase: embedding, vector-store, and PDF ingestion paths are imported
+# unconditionally by the routers/seed, so both requirements.txt and
+# requirements-heavy.txt must be installed for the app to start (see both Dockerfiles).

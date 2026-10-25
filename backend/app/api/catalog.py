@@ -89,15 +89,18 @@ async def get_tests(
     # Serialize before caching
     serialized_rows = [_serialize_test(r) for r in rows]
 
-    # Cache the result (fire and forget)
-    set_catalog_list(
-        equipment=listing.equipment,
-        page=listing.page,
-        page_size=listing.limit,
-        sort=listing.sort,
-        q=listing.q,
-        data=serialized_rows,
-    )
+    # Cache the result (best-effort, don't block the response)
+    try:
+        await set_catalog_list(
+            equipment=listing.equipment,
+            page=listing.page,
+            page_size=listing.limit,
+            sort=listing.sort,
+            q=listing.q,
+            data=serialized_rows,
+        )
+    except Exception:
+        pass
 
     return rows
 

@@ -1385,3 +1385,66 @@ def test_refresh_replay_after_grace_writes_refresh_replay_event(client, monkeypa
     )
     assert dead.status_code == 401
 
+
+# --- AUTH_TRD Day 2: argon2id + transparent upgrade (A-10) -------------------
+
+
+def test_new_accounts_are_hashed_with_argon2id(client):
+    from app.core.security import verify_password
+
+    email = "argon2-new@test.dev"
+    _register_uid(client, email)
+    db = SessionLocal()
+    try:
+        h = db.query(User.password_hash).filter(User.email == email).scalar()
+    finally:
+        db.close()
+    assert h.startswith("$argon2id$")
+    assert verify_password("pass1234", h)
+    assert not verify_password("wrong-pass1", h)
+
+
+def test_verify_password_returns_false_on_malformed_hashes():
+    from app.core.security import verify_password
+
+    assert not verify_password("whatever", "")
+    assert not verify_password("whatever", "not-a-real-hash")
+    assert not verify_password("whatever", "$2b$12$notenoughcharactersorvalidsaltvalue")
+
+
+def test_legacy_bcrypt_hash_upgraded_to_argon2id_on_login(client):
+    from passlib.context import CryptContext
+
+    email = "argon2-upgrade@test.dev"
+    legacy = CryptContext(schemes=["bcrypt"], deprecated="auto").hash("pass1234")
+    assert legacy.startswith("$2")  # genuinely a bcrypt row
+    db = SessionLocal()
+    try:
+        u = User(
+            name="Legacy User", email=email,
+            password_hash=legacy, role=UserRole.TRAINEE,
+        )
+        db.add(u)
+        db.commit()
+        uid = int(u.id)
+    finally:
+        db.close()
+
+    ok = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert ok.status_code == 200
+    db = SessionLocal()
+    try:
+        h = db.query(User.password_hash).filter(User.id == uid).scalar()
+    finally:
+        db.close()
+    assert h.startswith("$argon2id$")
+    assert h != legacy
+
+    # new hash works for both a good and a bad password
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).status_code == 200
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "wrong-pass1"}
+    ).status_code == 401
+

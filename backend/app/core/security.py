@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
@@ -13,6 +15,10 @@ from app.core.denylist import is_revoked
 settings = get_settings()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Current hasher: argon2id at the OWASP minimum (m=19 MiB, t=2, p=1).
+# bcrypt rows stay verifiable via pwd_context until transparently re-hashed
+# on the account's next successful login (AUTH_TRD Day 2, A-10).
+_argon2 = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 # Logout must still work with an expired access token (so a user whose token
 # lapsed can end the session and revoke the refresh token).
@@ -20,11 +26,31 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_e
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify against argon2id (current) or bcrypt (legacy) hashes.
+
+    Any malformed/unknown hash returns False instead of raising, so a corrupt
+    row can never 500 a login attempt.
+    """
+    if not hashed_password:
+        return False
+    if hashed_password.startswith("$argon2"):
+        try:
+            return bool(_argon2.verify(hashed_password, plain_password))
+        except (VerificationError, ValueError):
+            return False
+    try:
+        return bool(pwd_context.verify(plain_password, hashed_password))
+    except (ValueError, TypeError):
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return _argon2.hash(password)
+
+
+def password_hash_needs_upgrade(hashed_password: str) -> bool:
+    """True for legacy (bcrypt) rows that should be re-hashed on next login."""
+    return not hashed_password.startswith("$argon2id$")
 
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:

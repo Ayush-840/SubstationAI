@@ -33,6 +33,7 @@ def check_runtime_stack() -> None:
     # Packages that must be present for the app to start at all.
     _required("slowapi", "rate limiting / token deny-list support")
     _required("redis.asyncio", "Redis-backed deny-list and cache")
+    _required("argon2", "password hashing (argon2id)")
 
     if _missing:
         lines = ["Missing runtime dependency(ies):"]

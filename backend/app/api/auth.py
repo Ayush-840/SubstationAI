@@ -38,6 +38,7 @@ from app.core.security import (
     decode_token,
     get_current_user,
     get_password_hash,
+    password_hash_needs_upgrade,
     oauth2_scheme_optional,
     verify_password,
 )
@@ -149,6 +150,12 @@ def login(
                 detail={"email": credentials.email},
             )
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if password_hash_needs_upgrade(user.password_hash):
+        # Legacy bcrypt row: transparently re-hash to argon2id now that the
+        # correct password is in hand (AUTH_TRD Day 2, A-10).
+        user.password_hash = get_password_hash(credentials.password)
+        db.commit()
 
     record_success(ip, credentials.email)
     refresh_raw = issue_refresh_token(db, user.id)

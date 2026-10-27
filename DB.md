@@ -400,13 +400,9 @@ limits, instruments and standards, about 300 synonyms, demo users for each role
 explicit ASD criterion. Run it once at startup in the Docker image and in
 `docker-compose.yml` (idempotent — it never touches existing rows).
 
-Demo accounts (from `backend/app/scripts/seed.py`):
-
-| Role | Email | Password |
-|---|---|---|
-| Trainee | demo@substationiq.dev | demo1234 |
-| Engineer | engineer@substationiq.dev | engineer1234 |
-| Admin | admin@substationiq.dev | admin1234 |
+Demo accounts are created only when `SEED_DEMO_USERS=true` (development
+default off in production; passwords can be overridden with `DEMO_PASSWORD_*`
+environment variables). No credentials are stored in this document.
 
 ---
 

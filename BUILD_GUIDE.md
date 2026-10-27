@@ -126,8 +126,9 @@ Current repo specifics worth knowing before Day-1 onboarding:
   fall back to in-memory, and the app still starts (important for local dev and
   for cold starts on Render).
 - The app seeds on first start via `python -m app.scripts.seed` (idempotent).
-- Demo accounts (from the seed): `demo@substationiq.dev` / `demo1234` (trainee),
-  `engineer@substationiq.dev` / `engineer1234` (engineer), `admin@substationiq.dev` / `admin1234` (admin).
+- Demo accounts are created **only** when `SEED_DEMO_USERS=true` (development).
+  Production ships with `SEED_DEMO_USERS=false` and no built-in accounts; set
+  `DEMO_PASSWORD_*` overrides if you enable them locally.
 
 ## 6. Starter Code Skeletons
 
@@ -407,15 +408,15 @@ Remaining manual dashboard steps (the only things between "code is done" and
    connection string. Everything else Render auto-wires from the attached
    services or the defaults in `render.yaml`.
 
-Then re-deploy/restart and smoke-test the backend login:
+Then re-deploy/restart and smoke-test the backend (see `scripts/smoke.sh`):
 
 ```bash
-curl -X POST https://backend-h8ikkpyfy-ayush-840s-projects.onrender.com/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"demo@substationiq.dev","password":"demo1234"}'
+curl -s https://<your-render-service>.onrender.com/health
 ```
 
-Expected: a JSON body with `access_token`.
+Expected: `{"status":"healthy",...}`. Register an account through the app (or
+`POST /api/auth/register`) instead of using built-in credentials — none exist
+in production.
 
 Other rows from the originating spec still apply as goals:
 - [ ] Smoke test: register, ask, upload as admin, run a procedure (against the deployed link).
@@ -428,10 +429,8 @@ accounts, and the real Result Checker / DGA flows. The demo is the moment where
 you prove the app works end to end, so have it running before the viva and keep a
 local Docker Compose fallback in case of network issues.
 
-Demo accounts (from the live seed):
-- Trainee: `demo@substationiq.dev` / `demo1234`
-- Engineer: `engineer@substationiq.dev` / `engineer1234`
-- Admin: `admin@substationiq.dev` / `admin1234`
+Accounts: register fresh accounts before the demo (the deployment seeds no
+demo users; do not publish credentials in slides or docs).
 
 Script:
 1. Login as trainee: ask "How do I do an insulation resistance test on a power transformer?" → structured answer, open a citation.

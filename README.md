@@ -129,7 +129,7 @@ _Numeric limits always come from the cited source or the verified test catalog. 
 |---|---|
 | Live app | [SubstationIQ](https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app) |
 | Demo video | _add link_ |
-| Demo login | `demo@substationiq.dev` / `demo1234` (Trainee) · `engineer@substationiq.dev` / `engineer1234` (Engineer) · `admin@substationiq.dev` / `admin1234` (Admin) |
+| Demo login | None on production. Demo accounts are created only when `SEED_DEMO_USERS=true` (development); otherwise register a new account from the login page. |
 
 ```
 ![Chat](docs/screenshots/chat.png)

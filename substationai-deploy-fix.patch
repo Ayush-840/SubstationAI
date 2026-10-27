@@ -1,0 +1,3336 @@
+diff --git a/.env.example b/.env.example
+index a67c565..945169f 100644
+--- a/.env.example
++++ b/.env.example
+@@ -29,8 +29,9 @@ REDIS_URL=redis://localhost:6379/0
+ # JWT
+ JWT_SECRET=change-this-in-production-use-strong-random-string
+ JWT_ALGORITHM=HS256
+-JWT_EXPIRE_MINUTES=1440
++JWT_EXPIRE_MINUTES=15            # access token lifetime; refresh token keeps users signed in
+ REFRESH_EXPIRE_DAYS=7
++REFRESH_REUSE_GRACE_SECONDS=10
+ 
+ # ChromaDB (local: ./data/chroma; Docker: /app/data/chroma)
+ CHROMA_PATH=./data/chroma
+@@ -54,9 +55,18 @@ CORS_ALLOW_ORIGINS=http://localhost:5173
+ # Example pattern for any Vercel preview URL:
+ CORS_ALLOW_ORIGIN_REGEX=https://.*\.vercel\.app
+ 
+-# Rate limiting
+-RATE_LIMIT_LOGIN=5/minute
++# Rate limiting (per client IP) and failed-login lockout (per IP + email)
++RATE_LIMIT_LOGIN=30/minute
++RATE_LIMIT_REGISTER=30/hour
+ RATE_LIMIT_CHAT=30/minute
++LOGIN_MAX_FAILURES=5
++LOGIN_LOCKOUT_SECONDS=900
++
++# Environment: 'production' refuses to start with a placeholder JWT_SECRET (<32 chars),
++# empty CORS list, or demo users enabled.
++APP_ENV=development
++# Create demo trainee/engineer/admin accounts on seed (development only!)
++SEED_DEMO_USERS=true
+ 
+ # Logging
+ LOG_LEVEL=INFO
+\ No newline at end of file
+diff --git a/Dockerfile b/Dockerfile
+index b3d3f16..a00fc2f 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,34 +1,43 @@
++# Render builds this file (build context = repo root).
++#
++# Two image flavours, same file:
++#   default (INSTALL_HEAVY=false)  small image, boots in seconds, designed for Render's 512 MB free instance.
++#                                  Catalog, procedures, diagnosis, auth, history all work; document
++#                                  upload/semantic search degrade gracefully (the app logs
++#                                  "document retrieval disabled").
++#   INSTALL_HEAVY=true             adds torch/sentence-transformers/chromadb/spaCy/OCR (several GB,
++#                                  needs >= 2 GB RAM). Use on a paid instance or locally:
++#                                  docker build --build-arg INSTALL_HEAVY=true .
+ FROM python:3.11-slim
+ 
++ARG INSTALL_HEAVY=false
++ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
++
+ WORKDIR /app
+ 
+-# Install system dependencies
+-RUN apt-get update && apt-get install -y \
+-    gcc \
+-    libpq-dev \
+-    tesseract-ocr \
+-    libtesseract-dev \
+-    poppler-utils \
++RUN apt-get update \
++    && apt-get install -y --no-install-recommends libpq5 \
++    && if [ "$INSTALL_HEAVY" = "true" ]; then \
++         apt-get install -y --no-install-recommends gcc libpq-dev tesseract-ocr libtesseract-dev poppler-utils; \
++       fi \
+     && rm -rf /var/lib/apt/lists/*
+ 
+-# Install Python dependencies (both files are required at runtime:
+-# redis is imported by the token deny-list, and the heavy stack is imported
+-# unconditionally by the routers and seed script).
+ COPY backend/requirements.txt backend/requirements-heavy.txt ./
+-# Fail the build (seconds) if a startup-time import is missing, instead of a
+-# 15-minute runtime "no open ports" timeout on Render.
+-RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt \
+-    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, motor, chromadb, sentence_transformers, spacy, reportlab, yaml, rapidfuzz"
++RUN pip install -r requirements.txt \
++    && if [ "$INSTALL_HEAVY" = "true" ]; then \
++         pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-heavy.txt; \
++       fi \
++    # Fail the build (seconds) -- not a 15-minute "no open ports" timeout -- if a startup import is missing.
++    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, psycopg2, motor, yaml, rapidfuzz, reportlab, jose, passlib, bcrypt"
+ 
+-# Copy application code
+ COPY backend/ ./
+-
+-# Copy static data (catalog YAML + sample docs) to a path that survives
+-# the Render disk mount at /app/data (which would otherwise shadow them).
++# Static data lives outside /app/data so a mounted disk cannot shadow it (see app/core/paths.py).
+ COPY data/catalog/ /app/catalog/
+ COPY data/raw_docs/ /app/raw_docs/
+ 
+ EXPOSE 8000
+ 
+-# Seed once if the DB is empty (idempotent), then start the API.
+-CMD sh -c 'python -m app.scripts.seed || true && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'
++# 1) idempotent seed (catalog; demo users only if SEED_DEMO_USERS=true), 2) API on $PORT.
++# --proxy-headers / --forwarded-allow-ips: behind Render's proxy each request would otherwise
++# appear to come from the proxy's IP, so every user would share one rate-limit / lockout bucket.
++CMD sh -c "python -m app.scripts.seed || true; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"
+diff --git a/backend/Dockerfile b/backend/Dockerfile
+index 14ad4a2..4ec0713 100644
+--- a/backend/Dockerfile
++++ b/backend/Dockerfile
+@@ -1,29 +1,37 @@
++# Local/compose build (build context = ./backend). Render uses the Dockerfile at the repo root.
++#
++# Two image flavours, same file:
++#   default (INSTALL_HEAVY=false)  ~300 MB, boots in seconds, fits Render's 512 MB free instance.
++#                                  Catalog, procedures, diagnosis, auth, history all work; document
++#                                  upload/semantic search degrade gracefully (the app logs
++#                                  "document retrieval disabled").
++#   INSTALL_HEAVY=true             adds torch/sentence-transformers/chromadb/spaCy/OCR (several GB,
++#                                  needs >= 2 GB RAM). Use on a paid instance or locally:
++#                                  docker build --build-arg INSTALL_HEAVY=true .
+ FROM python:3.11-slim
+ 
++ARG INSTALL_HEAVY=false
++ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
++
+ WORKDIR /app
+ 
+-# Install system dependencies
+-RUN apt-get update && apt-get install -y \
+-    gcc \
+-    libpq-dev \
+-    tesseract-ocr \
+-    libtesseract-dev \
+-    poppler-utils \
++RUN apt-get update \
++    && apt-get install -y --no-install-recommends libpq5 \
++    && if [ "$INSTALL_HEAVY" = "true" ]; then \
++         apt-get install -y --no-install-recommends gcc libpq-dev tesseract-ocr libtesseract-dev poppler-utils; \
++       fi \
+     && rm -rf /var/lib/apt/lists/*
+ 
+-# Install Python dependencies (both files are required at runtime:
+-# redis is imported by the token deny-list, and the heavy stack is imported
+-# unconditionally by the routers and seed script).
+ COPY requirements.txt requirements-heavy.txt ./
+-# Fail the build (seconds) if a startup-time import is missing, instead of a
+-# 15-minute runtime "no open ports" timeout on Render.
+-RUN pip install --no-cache-dir -r requirements.txt -r requirements-heavy.txt \
+-    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, motor, chromadb, sentence_transformers, spacy, reportlab, yaml, rapidfuzz"
++RUN pip install -r requirements.txt \
++    && if [ "$INSTALL_HEAVY" = "true" ]; then \
++         pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-heavy.txt; \
++       fi \
++    # Fail the build (seconds) -- not a 15-minute "no open ports" timeout -- if a startup import is missing.
++    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, psycopg2, motor, yaml, rapidfuzz, reportlab, jose, passlib, bcrypt"
+ 
+-# Copy application
+ COPY . .
+ 
+ EXPOSE 8000
+ 
+-# Seed once if the DB is empty (idempotent), then start the API.
+-CMD sh -c 'python -m app.scripts.seed || true && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'
+\ No newline at end of file
++CMD sh -c "python -m app.scripts.seed || true; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"
+diff --git a/backend/app/api/auth.py b/backend/app/api/auth.py
+index ad3b80a..91d6077 100644
+--- a/backend/app/api/auth.py
++++ b/backend/app/api/auth.py
+@@ -1,8 +1,24 @@
++"""Register / login / refresh / logout / me.
++
++Behaviour is specified in AUTH_TRD.md; the short version:
++
++* emails are case-insensitive (stored lower-case, looked up with lower());
++* register -> 201, duplicate -> 409, weak input -> 422 (see schemas.UserCreate);
++* login is throttled per (IP, email) on *failures* and never says whether the
++  email or the password was wrong;
++* the access token is short-lived; the refresh token rotates on every use and a
++  replayed one ends all of the user's sessions;
++* logout works even when the access token has already expired.
++"""
++
+ from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
++from sqlalchemy import func
++from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.orm import Session
+-from app.db.session import get_db
+-from app.db.models import User, UserRole
++
++from app.core.config import get_settings
+ from app.core.denylist import revoke as revoke_jti
++from app.core.login_throttle import record_failure, record_success, retry_after
+ from app.core.refresh import (
+     CSRF_COOKIE,
+     CSRF_HEADER,
+@@ -17,68 +33,113 @@ from app.core.refresh import (
+     set_auth_cookies,
+ )
+ from app.core.security import (
+-    verify_password,
+-    get_password_hash,
+     create_access_token,
+     decode_token,
+     get_current_user,
+-    oauth2_scheme,
++    get_password_hash,
++    oauth2_scheme_optional,
++    verify_password,
+ )
+ from app.core.security_middleware import get_limiter
++from app.db.models import User, UserRole
++from app.db.session import get_db
+ from app.schemas import (
++    LogoutRequest,
++    RefreshRequest,
++    Token,
+     UserCreate,
+     UserLogin,
+     UserResponse,
+-    Token,
+-    RefreshRequest,
+-    LogoutRequest,
+ )
+-import os
+ 
+-# In tests, use very high rate limit to effectively disable
+-login_rate_limit = "10000/minute" if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("TESTING") else "5/minute"
++settings = get_settings()
+ limiter = get_limiter()
+ 
+ router = APIRouter(prefix="/api/auth", tags=["auth"])
+ 
++_dummy_hash: str | None = None
++
++
++def _burn_hash_time(password: str) -> None:
++    """Run a bcrypt verify against a fixed hash so an unknown email costs the
++    same time as a wrong password (no user enumeration through latency)."""
++    global _dummy_hash
++    if _dummy_hash is None:
++        _dummy_hash = get_password_hash("timing-equaliser-not-a-real-password")
++    verify_password(password, _dummy_hash)
++
++
++def _client_ip(request: Request) -> str:
++    return request.client.host if request.client else "unknown"
++
++
++def _token_response(user: User, refresh_raw: str) -> dict:
++    return {
++        "access_token": create_access_token({"sub": str(user.id)}),
++        "token_type": "bearer",
++        "refresh_token": refresh_raw,
++    }
+ 
+-@router.post("/register", response_model=UserResponse)
+-def register(user_data: UserCreate, db: Session = Depends(get_db)):
+-    existing = db.query(User).filter(User.email == user_data.email).first()
+-    if existing:
+-        raise HTTPException(status_code=400, detail="Email already registered")
++
++@router.post("/register", response_model=UserResponse, status_code=201)
++@limiter.limit(settings.RATE_LIMIT_REGISTER)
++def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
++    # user_data.email is already stripped and lower-cased by the schema.
++    exists = db.query(User.id).filter(func.lower(User.email) == user_data.email).first()
++    if exists:
++        raise HTTPException(status_code=409, detail="An account with this email already exists")
+ 
+     user = User(
+         name=user_data.name,
+         email=user_data.email,
+         password_hash=get_password_hash(user_data.password),
+-        role=UserRole.TRAINEE,
++        role=UserRole.TRAINEE,  # public sign-up can never choose a role
+     )
+     db.add(user)
+-    db.commit()
++    try:
++        db.commit()
++    except IntegrityError:  # two simultaneous sign-ups for the same email
++        db.rollback()
++        raise HTTPException(status_code=409, detail="An account with this email already exists")
+     db.refresh(user)
+     return user
+ 
+ 
+ @router.post("/login", response_model=Token)
+-@limiter.limit(login_rate_limit)
++@limiter.limit(settings.RATE_LIMIT_LOGIN)
+ def login(
+     request: Request,
+     credentials: UserLogin,
+     response: Response,
+     db: Session = Depends(get_db),
+ ):
+-    user = db.query(User).filter(User.email == credentials.email).first()
+-    if not user or not verify_password(credentials.password, user.password_hash):
+-        raise HTTPException(status_code=401, detail="Invalid credentials")
+-
++    ip = _client_ip(request)
++    wait = retry_after(ip, credentials.email)
++    if wait:
++        raise HTTPException(
++            status_code=429,
++            detail=f"Too many failed attempts. Try again in {wait} seconds.",
++            headers={"Retry-After": str(wait)},
++        )
++
++    user = (
++        db.query(User)
++        .filter(func.lower(User.email) == credentials.email)
++        .order_by(User.id)
++        .first()
++    )
++    if user is None:
++        _burn_hash_time(credentials.password)
++        record_failure(ip, credentials.email)
++        raise HTTPException(status_code=401, detail="Invalid email or password")
++    if not verify_password(credentials.password, user.password_hash):
++        record_failure(ip, credentials.email)
++        raise HTTPException(status_code=401, detail="Invalid email or password")
++
++    record_success(ip, credentials.email)
+     refresh_raw = issue_refresh_token(db, user.id)
+     set_auth_cookies(response, refresh_raw)
+-    return {
+-        "access_token": create_access_token({"sub": str(user.id)}),
+-        "token_type": "bearer",
+-        "refresh_token": refresh_raw,
+-    }
++    return _token_response(user, refresh_raw)
+ 
+ 
+ @router.post("/refresh", response_model=Token)
+@@ -92,8 +153,9 @@ def refresh(
+ ):
+     """Exchange a refresh token for a new access + refresh pair (rotation).
+ 
+-    The body carries the token for API clients; browsers use the HttpOnly
+-    cookie and must pass the CSRF double-submit check first.
++    The body carries the token for API clients and the SPA; the HttpOnly cookie
++    flow (same-site deployments) must pass the CSRF double-submit check first.
++    A replayed (already rotated) token ends every session of that user.
+     """
+     if body is not None and body.refresh_token:
+         raw = body.refresh_token
+@@ -110,37 +172,38 @@ def refresh(
+ 
+     refresh_raw = rotate_refresh_token(db, row)
+     set_auth_cookies(response, refresh_raw)
+-    return {
+-        "access_token": create_access_token({"sub": str(user.id)}),
+-        "token_type": "bearer",
+-        "refresh_token": refresh_raw,
+-    }
++    return _token_response(user, refresh_raw)
+ 
+ 
+ @router.post("/logout")
+ async def logout(
+     response: Response,
+     db: Session = Depends(get_db),
+-    raw_token: str = Depends(oauth2_scheme),
++    raw_token: str | None = Depends(oauth2_scheme_optional),
+     body: LogoutRequest | None = None,
+     refresh_cookie: str | None = Cookie(None, alias=REFRESH_COOKIE),
+     csrf_cookie: str | None = Cookie(None, alias=CSRF_COOKIE),
+     csrf_header: str | None = Header(None, alias=CSRF_HEADER),
+ ):
+-    """Kill the session on both sides (Day 6 B).
+-
+-    The access token's ``jti`` is deny-listed until the token's own expiry,
+-    so it stops working immediately; the refresh token named in the body (or
+-    the cookie, after the CSRF check) is revoked, or all of the user's active
+-    refresh tokens when neither is supplied. Idempotent: logging out twice
+-    still succeeds. The deny-list lives in memory until Day 9 moves it to
+-    Redis.
++    """End the session on both sides. Idempotent.
++
++    * the access token's ``jti`` is deny-listed until the token's own expiry
++      (an already-expired token is accepted here, otherwise a user whose token
++      lapsed could never sign out);
++    * the refresh token from the body (or cookie, after the CSRF check) is
++      revoked; with neither supplied, every active refresh token of the user
++      is revoked.
+     """
+-    payload = decode_token(raw_token)  # signature/expiry only — not the deny-list
+-    user_id = payload.get("sub")
+-    if user_id is None:
+-        raise HTTPException(status_code=401, detail="Invalid token")
+-    jti = payload.get("jti")
++    user_id = None
++    if raw_token:
++        payload = decode_token(raw_token, verify_exp=False)  # signature still checked
++        user_id = payload.get("sub")
++        jti, exp = payload.get("jti"), payload.get("exp")
++        if jti:
++            # Must be awaited: the deny-list is async (Redis). The previous
++            # sync call created a coroutine that never ran, so logout did not
++            # actually revoke the access token.
++            await revoke_jti(jti, float(exp) if exp is not None else None)
+ 
+     revoked = 0
+     if body is not None and body.refresh_token:
+@@ -148,12 +211,10 @@ async def logout(
+     elif refresh_cookie is not None:
+         require_csrf_for_cookie_flow(refresh_cookie, csrf_cookie, csrf_header)
+         revoked = int(revoke_by_raw(db, refresh_cookie))
+-    else:
++    elif user_id is not None:
+         revoked = revoke_all_for_user(db, int(user_id))
+-
+-    if jti:
+-        exp = payload.get("exp")
+-        await revoke_jti(jti, float(exp) if exp is not None else None)
++    else:
++        raise HTTPException(status_code=401, detail="Not authenticated")
+ 
+     clear_auth_cookies(response)
+     return {"ok": True, "revoked_refresh_tokens": revoked}
+diff --git a/backend/app/api/chat.py b/backend/app/api/chat.py
+index 2a1fe87..eeb3399 100644
+--- a/backend/app/api/chat.py
++++ b/backend/app/api/chat.py
+@@ -12,6 +12,7 @@ from app.db.mongo import get_mongo
+ from app.db.mongo_repos import ConversationRepo, MessageRepo
+ from app.db.models import User, Conversation, Message, ConversationMode
+ from app.core.security import get_current_user
++from app.core.config import get_settings
+ from app.core.security_middleware import get_limiter
+ from app.schemas import ChatRequest, ChatResponse, ConversationDoc, MessageDoc
+ from app.nlp.intent import intent_classifier
+@@ -19,6 +20,7 @@ from app.rag.assembler import AnswerAssembler, stream_answer
+ from app.cache.redis_cache import get_cached_answer, set_cached_answer
+ 
+ chat_rate_limit = "10000/minute" if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("TESTING") else "30/minute"
++settings = get_settings()
+ limiter = get_limiter()
+ 
+ logger = logging.getLogger(__name__)
+@@ -131,7 +133,7 @@ async def _mirror_turn_to_mongo(
+ 
+ 
+ @router.post("/stream")
+-@limiter.limit("30/minute")
++@limiter.limit(settings.RATE_LIMIT_CHAT)
+ async def chat_stream(
+     request: Request,
+     request_body: ChatRequest,
+diff --git a/backend/app/cache/redis_cache.py b/backend/app/cache/redis_cache.py
+index 64b23d8..8e1b10c 100644
+--- a/backend/app/cache/redis_cache.py
++++ b/backend/app/cache/redis_cache.py
+@@ -20,7 +20,7 @@ def get_redis() -> Redis:
+     """Get Redis client (singleton)."""
+     settings = get_settings()
+     return redis.from_url(
+-        getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
++        settings.REDIS_URL or "redis://localhost:6379/0",
+         encoding="utf-8",
+         decode_responses=True,
+     )
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 55558ce..e85e7a7 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -30,11 +30,38 @@ class Settings(BaseSettings):
+     MONGODB_PASSWORD: str | None = None
+     MONGODB_URI: str | None = None
+ 
+-    # JWT
++    # Environment: "development" (default) or "production". Production refuses
++    # to start with the placeholder JWT secret (see assert_production_ready).
++    APP_ENV: str = "development"
++
++    # JWT — short-lived access token + rotating refresh token (see AUTH_TRD).
+     JWT_SECRET: str = "change-me"
+     JWT_ALGORITHM: str = "HS256"
+-    JWT_EXPIRE_MINUTES: int = 1440
++    JWT_EXPIRE_MINUTES: int = 15
+     REFRESH_EXPIRE_DAYS: int = 7
++    # A refresh token that is replayed within this many seconds of its first
++    # use is treated as a client race (two tabs), not as theft.
++    REFRESH_REUSE_GRACE_SECONDS: int = 10
++
++    # Redis (optional): cache, deny-list, rate-limit storage. Empty = in-memory.
++    REDIS_URL: str = ""
++
++    # CORS: comma-separated exact origins; "*.example.app" wildcards allowed.
++    CORS_ALLOW_ORIGIN_REGEX: str = ""
++    CORS_ALLOW_ORIGINS: str = ""
++
++    # Rate limits (slowapi syntax). Login/register are per client IP; the
++    # failed-login throttle below is per (IP, email).
++    RATE_LIMIT_LOGIN: str = "30/minute"
++    RATE_LIMIT_REGISTER: str = "30/hour"
++    RATE_LIMIT_CHAT: str = "30/minute"
++    LOGIN_MAX_FAILURES: int = 5
++    LOGIN_LOCKOUT_SECONDS: int = 900
++
++    # Demo accounts (demo@, engineer@, admin@substationiq.dev) are created only
++    # when this is true. Never enable it on a public deployment without
++    # setting DEMO_PASSWORD_* overrides.
++    SEED_DEMO_USERS: bool = False
+ 
+     # ChromaDB (absolute default so the index resolves the same regardless of
+     # the launch directory; docker-compose mounts ./data at /app/data)
+@@ -58,6 +85,29 @@ class Settings(BaseSettings):
+     class Config:
+         env_file = str(_ENV_FILE)
+         case_sensitive = True
++        # Unknown keys in .env must not crash startup (the README tells users
++        # to `cp .env.example .env`).
++        extra = "ignore"
++
++    @property
++    def is_production(self) -> bool:
++        return self.APP_ENV.lower() == "production"
++
++    def assert_production_ready(self) -> None:
++        """Fail fast on unsafe production settings instead of running insecurely."""
++        if not self.is_production:
++            return
++        problems = []
++        if self.JWT_SECRET in ("", "change-me") or self.JWT_SECRET.startswith("change-this"):
++            problems.append("JWT_SECRET is unset or still a placeholder")
++        if len(self.JWT_SECRET) < 32:
++            problems.append("JWT_SECRET must be at least 32 characters")
++        if not self.CORS_ALLOW_ORIGINS and not self.CORS_ALLOW_ORIGIN_REGEX:
++            problems.append("CORS_ALLOW_ORIGINS is empty (the browser frontend would be blocked)")
++        if self.SEED_DEMO_USERS:
++            problems.append("SEED_DEMO_USERS must be false in production")
++        if problems:
++            raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
+ 
+ 
+ @lru_cache()
+diff --git a/backend/app/core/login_throttle.py b/backend/app/core/login_throttle.py
+new file mode 100644
+index 0000000..04f7383
+--- /dev/null
++++ b/backend/app/core/login_throttle.py
+@@ -0,0 +1,76 @@
++"""Failed-login throttle keyed by (client IP, email).
++
++slowapi limits requests per IP, which both punishes users who log in
++successfully a few times and does nothing against one attacker rotating
++through accounts. This throttle counts only *failures*, per (IP, email) pair,
++and clears the counter on success:
++
++* after ``LOGIN_MAX_FAILURES`` failures the pair is locked for
++  ``LOGIN_LOCKOUT_SECONDS`` (HTTP 429 + ``Retry-After``);
++* keying on IP as well as email means an attacker cannot lock a victim out
++  of their own account from another network.
++
++State is in process memory: correct for a single instance (Render free tier,
++docker-compose). A multi-instance deployment should move this to Redis
++(INCR + EXPIRE) -- see AUTH_TRD.md section 8.
++"""
++
++import threading
++import time
++
++from app.core.config import get_settings
++
++_lock = threading.Lock()
++_failures: dict[str, tuple[int, float]] = {}  # key -> (count, window_start)
++_locked_until: dict[str, float] = {}
++
++
++def _key(ip: str, email: str) -> str:
++    return f"{ip}|{email.strip().lower()}"
++
++
++def retry_after(ip: str, email: str) -> int:
++    """Seconds the caller must wait, or 0 when login may be attempted."""
++    k = _key(ip, email)
++    now = time.time()
++    with _lock:
++        until = _locked_until.get(k)
++        if until is None:
++            return 0
++        if until <= now:
++            _locked_until.pop(k, None)
++            _failures.pop(k, None)
++            return 0
++        return int(until - now) + 1
++
++
++def record_failure(ip: str, email: str) -> None:
++    s = get_settings()
++    k = _key(ip, email)
++    now = time.time()
++    with _lock:
++        count, start = _failures.get(k, (0, now))
++        if now - start > s.LOGIN_LOCKOUT_SECONDS:
++            count, start = 0, now  # old failures age out
++        count += 1
++        _failures[k] = (count, start)
++        if count >= s.LOGIN_MAX_FAILURES:
++            _locked_until[k] = now + s.LOGIN_LOCKOUT_SECONDS
++        if len(_failures) > 10_000:  # bound memory under a spray attack
++            for old in [x for x, (_, st) in _failures.items() if now - st > s.LOGIN_LOCKOUT_SECONDS]:
++                _failures.pop(old, None)
++                _locked_until.pop(old, None)
++
++
++def record_success(ip: str, email: str) -> None:
++    k = _key(ip, email)
++    with _lock:
++        _failures.pop(k, None)
++        _locked_until.pop(k, None)
++
++
++def reset() -> None:
++    """Test hygiene."""
++    with _lock:
++        _failures.clear()
++        _locked_until.clear()
+diff --git a/backend/app/core/refresh.py b/backend/app/core/refresh.py
+index 0568699..c94b117 100644
+--- a/backend/app/core/refresh.py
++++ b/backend/app/core/refresh.py
+@@ -62,6 +62,15 @@ def find_valid_token(db: Session, raw: str) -> RefreshToken:
+     if row.revoked_at is not None:
+         raise HTTPException(status_code=401, detail="Refresh token revoked")
+     if row.used_at is not None:
++        # A rotated-out token coming back means either a client race (two tabs
++        # refreshing at once) or a stolen copy. Inside the grace window assume
++        # the race; outside it, assume theft and end every session for the user.
++        age = (datetime.utcnow() - row.used_at).total_seconds()
++        if age > settings.REFRESH_REUSE_GRACE_SECONDS:
++            revoke_all_for_user(db, row.user_id)
++            raise HTTPException(
++                status_code=401, detail="Refresh token reuse detected; please sign in again"
++            )
+         raise HTTPException(status_code=401, detail="Refresh token already used")
+     if row.expires_at <= datetime.utcnow():
+         raise HTTPException(status_code=401, detail="Refresh token expired")
+diff --git a/backend/app/core/security.py b/backend/app/core/security.py
+index a867ce0..607db46 100644
+--- a/backend/app/core/security.py
++++ b/backend/app/core/security.py
+@@ -1,4 +1,4 @@
+-from datetime import datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ from uuid import uuid4
+ from jose import jwt, JWTError
+ from passlib.context import CryptContext
+@@ -14,6 +14,9 @@ settings = get_settings()
+ 
+ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
++# Logout must still work with an expired access token (so a user whose token
++# lapsed can end the session and revoke the refresh token).
++oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+ 
+ 
+ def verify_password(plain_password: str, hashed_password: str) -> bool:
+@@ -26,20 +29,22 @@ def get_password_hash(password: str) -> str:
+ 
+ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
+     to_encode = data.copy()
+-    expire = datetime.utcnow() + (
+-        expires_delta or timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+-    )
+-    to_encode.update({"exp": expire})
++    now = datetime.now(timezone.utc)
++    expire = now + (expires_delta or timedelta(minutes=settings.JWT_EXPIRE_MINUTES))
++    to_encode.update({"exp": expire, "iat": now, "typ": "access"})
+     # jti identifies this issuance so /auth/logout can deny-list exactly this
+     # token; setdefault lets callers supply their own id.
+     to_encode.setdefault("jti", uuid4().hex)
+     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+ 
+ 
+-def decode_token(token: str) -> dict:
++def decode_token(token: str, verify_exp: bool = True) -> dict:
+     try:
+         return jwt.decode(
+-            token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM]
++            token,
++            settings.JWT_SECRET,
++            algorithms=[settings.JWT_ALGORITHM],
++            options={"verify_exp": verify_exp},
+         )
+     except JWTError:
+         raise HTTPException(
+@@ -53,6 +58,8 @@ async def get_current_user(
+     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+ ) -> User:
+     payload = decode_token(token)
++    if payload.get("typ", "access") != "access":
++        raise HTTPException(status_code=401, detail="Invalid token type")
+     jti = payload.get("jti")
+     if jti and await is_revoked(jti):
+         raise HTTPException(
+diff --git a/backend/app/core/security_middleware.py b/backend/app/core/security_middleware.py
+index ba32c95..6c9e0ec 100644
+--- a/backend/app/core/security_middleware.py
++++ b/backend/app/core/security_middleware.py
+@@ -1,131 +1,124 @@
+-"""Security middleware and rate limiting (Day 8 B).
+-
+-- slowapi rate limiting on /auth/login and /chat/stream
+-- CORS allow-list (configured via env var)
+-- Security headers middleware
++"""Security middleware: CORS allow-list, rate limiting, security headers.
++
++Design notes (see AUTH_TRD.md §9):
++
++* CORS origins come from ``Settings`` — the previous version read
++  ``CORS_ALLOW_ORIGINS`` with ``getattr`` on a model that had no such field, so
++  the deployed frontend was silently blocked. ``FRONTEND_URL`` is always allowed
++  too, and ``https://*.example.app`` style wildcards are compiled to a regex
++  (Starlette's ``allow_origins`` only does exact matching).
++* Rate limits are read from settings; the limiter uses Redis storage when
++  ``REDIS_URL`` is reachable and in-memory storage otherwise.
++* The client IP is whatever uvicorn reports. Behind a reverse proxy (Render)
++  start uvicorn with ``--proxy-headers --forwarded-allow-ips='*'`` so every user
++  does not share the proxy's IP (and therefore one rate-limit bucket).
+ """
+ 
++import re
++import sys
+ from functools import lru_cache
+-from typing import Optional
+ 
+-from fastapi import FastAPI, Request, Response
++from fastapi import FastAPI, Request
+ from fastapi.middleware.cors import CORSMiddleware
+-from slowapi import Limiter, _rate_limit_exceeded_handler
++from fastapi.responses import JSONResponse
++from slowapi import Limiter
+ from slowapi.errors import RateLimitExceeded
+ from slowapi.util import get_remote_address
+ 
+ from app.core.config import get_settings
+ 
++DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
++
+ 
+ @lru_cache()
+ def get_limiter() -> Limiter:
+-    """Create a Limiter instance with in-memory storage (tests) or Redis (production)."""
+-    import sys
+-    # In tests, always use in-memory storage
+-    if "pytest" in sys.modules:
+-        storage_uri = "memory://"
+-    else:
+-        settings = get_settings()
+-        storage_uri = "memory://"
+-        redis_url = getattr(settings, "REDIS_URL", None)
++    """Limiter with Redis storage when reachable, in-memory otherwise."""
++    storage_uri = "memory://"
++    if "pytest" not in sys.modules:
++        redis_url = get_settings().REDIS_URL
+         if redis_url:
+-            # Quick connectivity probe
+             try:
+-                import redis
+-                test_client = redis.from_url(redis_url, socket_connect_timeout=0.5)
+-                test_client.ping()
++                import redis  # local import: only needed when configured
++
++                redis.from_url(redis_url, socket_connect_timeout=0.5).ping()
+                 storage_uri = redis_url
+             except Exception:
+-                pass
+-    return Limiter(
+-        key_func=get_remote_address,
+-        storage_uri=storage_uri,
+-        default_limits=[],
+-    )
++                pass  # fall back to per-process memory
++    return Limiter(key_func=get_remote_address, storage_uri=storage_uri, default_limits=[])
++
++
++def parse_cors(raw: str, frontend_url: str = "", production: bool = False) -> tuple[list[str], str | None]:
++    """Split the allow-list into exact origins and one compiled wildcard regex."""
++    items = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
++    if frontend_url:
++        items.append(frontend_url.strip().rstrip("/"))
++    if not production:
++        items.extend(DEV_ORIGINS)
++
++    exact: list[str] = []
++    patterns: list[str] = []
++    for origin in dict.fromkeys(items):  # de-duplicate, keep order
++        if "*" in origin:
++            # '*' matches exactly one DNS label, never a dot or a slash.
++            patterns.append(re.escape(origin).replace(r"\*", "[a-z0-9-]+"))
++        else:
++            exact.append(origin)
++    regex = "^(?:" + "|".join(patterns) + ")$" if patterns else None
++    return exact, regex
++
++
++def build_cors(settings) -> tuple[list[str], str | None]:
++    """Exact origins + one combined regex from CORS_ALLOW_ORIGINS (wildcards) and
++    CORS_ALLOW_ORIGIN_REGEX (a raw regex, matched against the whole origin)."""
++    exact, regex = parse_cors(settings.CORS_ALLOW_ORIGINS, settings.FRONTEND_URL, settings.is_production)
++    extra = (settings.CORS_ALLOW_ORIGIN_REGEX or "").strip()
++    if extra:
++        re.compile(extra)  # fail at startup, not on the first preflight, if the pattern is invalid
++        regex = f"(?:{regex})|(?:{extra})" if regex else extra
++    return exact, regex
+ 
+ 
+ def get_cors_origins() -> list[str]:
+-    """Parse CORS allow-list from env var, fallback to localhost for dev."""
+-    settings = get_settings()
+-    raw = getattr(settings, "CORS_ALLOW_ORIGINS", "")
+-    if raw:
+-        return [o.strip() for o in raw.split(",") if o.strip()]
+-    # Dev fallback
+-    return ["http://localhost:5173", "http://127.0.0.1:5173"]
++    """Exact origins currently allowed (kept for tests and diagnostics)."""
++    s = get_settings()
++    return parse_cors(s.CORS_ALLOW_ORIGINS, s.FRONTEND_URL, s.is_production)[0]
+ 
+ 
+-def get_cors_origin_regex() -> str | None:
+-    """Optional regex for CORS origins (e.g. Vercel preview subdomains).
+-
+-    When set, origins matching the regex are allowed in addition to the exact
+-    allow_origins list. Useful for ``*.vercel.app`` preview URLs where the exact
+-    subdomain is not known ahead of time.
+-    """
+-    settings = get_settings()
+-    raw = getattr(settings, "CORS_ALLOW_ORIGIN_REGEX", "")
+-    return raw.strip() or None
++async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
++    """429 in the same ``{"detail": ...}`` shape as every other error."""
++    return JSONResponse(
++        status_code=429,
++        content={"detail": f"Too many requests ({exc.detail}). Please wait and try again."},
++        headers={"Retry-After": "60"},
++    )
+ 
+ 
+ def add_security_middleware(app: FastAPI) -> None:
+-    """Add CORS, rate limiting, and security headers to the FastAPI app."""
+     settings = get_settings()
+-    limiter = get_limiter()
+-
+-    origins = get_cors_origins()
+-    allow_origin_regex = get_cors_origin_regex()
++    origins, origin_regex = build_cors(settings)
+     app.add_middleware(
+         CORSMiddleware,
+         allow_origins=origins,
+-        allow_origin_regex=allow_origin_regex,
++        allow_origin_regex=origin_regex,
+         allow_credentials=True,
+-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+-        allow_headers=["*"],
++        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
++        allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
++        max_age=600,
+     )
+ 
+-    # Rate limiter
+-    app.state.limiter = limiter
+-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
++    app.state.limiter = get_limiter()
++    app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+ 
+-    # Security headers middleware
+     @app.middleware("http")
+     async def add_security_headers(request: Request, call_next):
+         response = await call_next(request)
+-        # Prevent MIME type sniffing
+         response.headers["X-Content-Type-Options"] = "nosniff"
+-        # Prevent clickjacking
+         response.headers["X-Frame-Options"] = "DENY"
+-        # HSTS (only in production with HTTPS)
+-        if not settings.FRONTEND_URL.startswith("http://localhost"):
+-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+-        # Referrer policy
+         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+-        # Permissions policy (formerly Feature-Policy)
+         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
++        if settings.is_production:
++            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
++        if request.url.path.startswith("/api/auth/"):
++            # Token responses must never sit in a shared or browser cache.
++            response.headers["Cache-Control"] = "no-store"
+         return response
+-
+-
+-def apply_rate_limits(app: FastAPI) -> None:
+-    """Apply specific rate limits to sensitive endpoints."""
+-    import sys
+-    # Skip rate limiting in tests
+-    if "pytest" in sys.modules:
+-        return
+-        
+-    limiter = app.state.limiter
+-
+-    # Import here to avoid circular imports
+-    from app.api import auth, chat
+-
+-    # Rate limit login: 5 requests/minute per IP
+-    @limiter.limit("5/minute")
+-    async def rate_limited_login(request: Request):
+-        pass  # The actual endpoint is in auth router
+-
+-    # Rate limit chat stream: 30 requests/minute per IP
+-    @limiter.limit("30/minute")
+-    async def rate_limited_chat(request: Request):
+-        pass
+-
+-    # Apply to existing endpoints by wrapping them
+-    # Note: This is a simplified approach; in production you'd decorate the actual endpoints
+-    # For now we register the limiters; the actual decoration happens in the router files
+\ No newline at end of file
+diff --git a/backend/app/db/session.py b/backend/app/db/session.py
+index c7c5f30..25db1ad 100644
+--- a/backend/app/db/session.py
++++ b/backend/app/db/session.py
+@@ -4,11 +4,15 @@ from app.core.config import get_settings
+ 
+ settings = get_settings()
+ 
++# Some hosts hand out "postgres://", which SQLAlchemy 2.x no longer accepts.
++DATABASE_URL = settings.DATABASE_URL
++if DATABASE_URL.startswith("postgres://"):
++    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
++
+ engine = create_engine(
+-    settings.DATABASE_URL,
+-    connect_args={"check_same_thread": False}
+-    if "sqlite" in settings.DATABASE_URL
+-    else {},
++    DATABASE_URL,
++    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
++    pool_pre_ping=True,  # free-tier Postgres drops idle connections; reconnect instead of 500
+ )
+ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+ Base = declarative_base()
+diff --git a/backend/app/main.py b/backend/app/main.py
+index d8bf36c..3b8c45b 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -1,5 +1,4 @@
+ from fastapi import FastAPI
+-from fastapi.middleware.cors import CORSMiddleware
+ from contextlib import asynccontextmanager
+ from app.core.config import get_settings
+ from app.db.session import engine, Base
+@@ -7,9 +6,10 @@ from app.db.migrate import migrate_user_roles
+ from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback
+ from app.api.v1 import api_router
+ from app.db.mongo import get_mongo, close_mongo, ensure_indexes
+-from app.core.security_middleware import add_security_middleware, apply_rate_limits
++from app.core.security_middleware import add_security_middleware
+ 
+ settings = get_settings()
++settings.assert_production_ready()  # refuse to boot with an unsafe production config
+ 
+ # Configure logging at startup so all loggers output to stdout (Render collects
+ # stdout/stderr). Without this, loggers created via getLogger() inherit the
+@@ -64,12 +64,10 @@ app = FastAPI(
+     lifespan=lifespan,
+ )
+ 
+-# Add security middleware (CORS, rate limiting, security headers)
++# CORS allow-list, 429 handler and security headers. Per-route limits are
++# declared with @limiter.limit(...) on the auth and chat routes themselves.
+ add_security_middleware(app)
+ 
+-# Apply rate limits to sensitive endpoints
+-apply_rate_limits(app)
+-
+ app.include_router(api_router)
+ for legacy_router in LEGACY_ROUTERS:
+     app.include_router(legacy_router)
+diff --git a/backend/app/schemas/__init__.py b/backend/app/schemas/__init__.py
+index 3c65198..ee378ee 100644
+--- a/backend/app/schemas/__init__.py
++++ b/backend/app/schemas/__init__.py
+@@ -1,4 +1,4 @@
+-from pydantic import BaseModel, EmailStr
++from pydantic import BaseModel, EmailStr, Field, field_validator
+ from typing import Optional, List, Dict, Any
+ from datetime import datetime
+ from enum import Enum
+@@ -32,15 +32,68 @@ class LogoutRequest(BaseModel):
+     refresh_token: Optional[str] = None
+ 
+ 
++# Small deny-list of passwords that satisfy the letter+digit rule but are
++# guessed first by every credential-stuffing tool.
++COMMON_PASSWORDS = frozenset(
++    {
++        "password1", "password12", "password123", "passw0rd1", "qwerty123",
++        "qwerty1234", "abc12345", "abcd1234", "iloveyou1", "welcome1",
++        "welcome123", "admin123", "admin1234", "letmein123", "12345678a",
++        "a1234567", "1q2w3e4r", "test1234", "changeme1",
++    }
++)
++
++
++def _norm_email(value: str) -> str:
++    return value.strip().lower()
++
++
+ class UserCreate(BaseModel):
+-    name: str
++    """Registration input. Every rule here is also enforced by the tests."""
++
++    name: str = Field(min_length=1, max_length=100)
+     email: EmailStr
+-    password: str
++    # bcrypt silently ignores everything after byte 72, so we cap in *bytes*
++    # (the character cap alone would let 80 multi-byte characters through).
++    password: str = Field(min_length=8, max_length=128)
++
++    @field_validator("name")
++    @classmethod
++    def _clean_name(cls, v: str) -> str:
++        v = " ".join(v.split())
++        if not v:
++            raise ValueError("Name must not be blank")
++        return v
++
++    @field_validator("email")
++    @classmethod
++    def _lower_email(cls, v: str) -> str:
++        return _norm_email(v)
++
++    @field_validator("password")
++    @classmethod
++    def _password_policy(cls, v: str) -> str:
++        if len(v.encode("utf-8")) > 72:
++            raise ValueError("Password must be at most 72 bytes long")
++        if not v.strip():
++            raise ValueError("Password must not be blank")
++        if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
++            raise ValueError("Password must contain at least one letter and one digit")
++        if v.lower() in COMMON_PASSWORDS:
++            raise ValueError("That password is too common; choose another")
++        return v
+ 
+ 
+ class UserLogin(BaseModel):
++    """Login input: normalised email, but no password policy (old accounts)."""
++
+     email: EmailStr
+-    password: str
++    password: str = Field(min_length=1, max_length=1024)
++
++    @field_validator("email")
++    @classmethod
++    def _lower_email(cls, v: str) -> str:
++        return _norm_email(v)
+ 
+ 
+ class UserResponse(BaseModel):
+diff --git a/backend/app/scripts/seed.py b/backend/app/scripts/seed.py
+index 47959b7..e0e2bfb 100644
+--- a/backend/app/scripts/seed.py
++++ b/backend/app/scripts/seed.py
+@@ -8,6 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from app.db.session import SessionLocal, engine, Base  # noqa: E402
+ from app.db import models  # noqa: E402
++import os  # noqa: E402
++
++from sqlalchemy import func  # noqa: E402
++
++from app.core.config import get_settings  # noqa: E402
+ from app.core.security import get_password_hash  # noqa: E402
+ from app.catalog.loader import (
+     load_catalog_to_db,
+@@ -17,7 +22,11 @@ from app.catalog.loader import (
+ from app.db.models import User, UserRole  # noqa: E402
+ from app.db.migrate import migrate_user_roles  # noqa: E402
+ 
+-# Demo users (README credentials). Roles follow the Day-7 three-role model.
++# Demo users for local development and classroom demos. They are created only
++# when SEED_DEMO_USERS=true (see core/config.py). The defaults below are public
++# (they are in the README), so a deployment that enables demo users must
++# override at least the admin password:
++#   DEMO_PASSWORD_TRAINEE / DEMO_PASSWORD_ENGINEER / DEMO_PASSWORD_ADMIN
+ DEMO_USERS = [
+     ("Demo User", "demo@substationiq.dev", "demo1234", UserRole.TRAINEE),
+     ("Demo Engineer", "engineer@substationiq.dev", "engineer1234", UserRole.ENGINEER),
+@@ -27,8 +36,9 @@ DEMO_USERS = [
+ 
+ def ensure_demo_users(db) -> None:
+     """Insert any missing demo account; never touches existing rows."""
+-    for name, email, password, role in DEMO_USERS:
+-        user = db.query(User).filter(User.email == email).first()
++    for name, email, default_password, role in DEMO_USERS:
++        password = os.environ.get(f"DEMO_PASSWORD_{role.name}", default_password)
++        user = db.query(User).filter(func.lower(User.email) == email).first()
+         if not user:
+             db.add(
+                 User(
+@@ -46,7 +56,10 @@ def seed() -> None:
+     migrate_user_roles(engine)
+     db = SessionLocal()
+     try:
+-        ensure_demo_users(db)
++        if get_settings().SEED_DEMO_USERS:
++            ensure_demo_users(db)
++        else:
++            print("Demo users skipped (set SEED_DEMO_USERS=true to create them).")
+ 
+         # Catalog + synonyms + sample documents
+         load_catalog_to_db(db)
+@@ -64,11 +77,8 @@ def seed() -> None:
+         print(
+             f"Seed complete: {equips} equipment classes, {tests} tests, {limits} limits"
+         )
+-        print(
+-            "Users: demo@substationiq.dev / demo1234 (trainee)"
+-            "  |  engineer@substationiq.dev / engineer1234 (engineer)"
+-            "  |  admin@substationiq.dev / admin1234 (admin)"
+-        )
++        if get_settings().SEED_DEMO_USERS:
++            print("Demo users created (development only): demo@ / engineer@ / admin@substationiq.dev")
+     finally:
+         db.close()
+ 
+diff --git a/backend/tests/test_api.py b/backend/tests/test_api.py
+index 98e1abd..9cb8655 100644
+--- a/backend/tests/test_api.py
++++ b/backend/tests/test_api.py
+@@ -14,6 +14,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_test_db.name}"
+ os.environ["LLM_PROVIDER"] = "none"
+ os.environ["CHROMA_PATH"] = tempfile.mkdtemp(prefix="siq_chroma_")
+ os.environ["TESTING"] = "1"
++os.environ.setdefault("RATE_LIMIT_LOGIN", "100000/minute")
++os.environ.setdefault("RATE_LIMIT_REGISTER", "100000/minute")
++os.environ.setdefault("LOGIN_MAX_FAILURES", "1000")
+ 
+ import json  # noqa: E402
+ from datetime import datetime, timedelta  # noqa: E402
+@@ -126,7 +129,7 @@ def test_register_and_login(client):
+         "/api/auth/register",
+         json={"name": "X", "email": "x@test.dev", "password": "pass1234"},
+     )
+-    assert r.status_code == 200
++    assert r.status_code == 201
+     r = client.post(
+         "/api/auth/login", json={"email": "x@test.dev", "password": "pass1234"}
+     )
+@@ -839,7 +842,7 @@ def test_register_defaults_to_trainee_role(client):
+         "/api/auth/register",
+         json={"name": "New Trainee", "email": "t7@test.dev", "password": "pass1234"},
+     )
+-    assert r.status_code == 200
++    assert r.status_code == 201
+     assert r.json()["role"] == "trainee"
+ 
+ 
+@@ -906,7 +909,7 @@ def _register_and_login(client, email: str) -> dict:
+         "/api/auth/register",
+         json={"name": "Intruder", "email": email, "password": "pass1234"},
+     )
+-    assert r.status_code == 200
++    assert r.status_code == 201
+     return _login(client, email)
+ 
+ 
+@@ -1011,3 +1014,244 @@ def test_procedure_run_ownership_blocks_other_users(client, user_headers):
+         json={"step_no": 1, "done": True},
+     )
+     assert r.status_code == 200
++
++
++# --- Oct-24 audit: register/login hardening ------------------------------------
++# One test per defect found in the audit; each failed before its fix.
++
++from app.core import login_throttle  # noqa: E402
++from app.core.config import Settings, get_settings  # noqa: E402
++from app.core.security import create_access_token, decode_token  # noqa: E402
++from app.core.security_middleware import parse_cors  # noqa: E402
++
++
++def _register(client, email, password="pass1234", name="Tester"):
++    return client.post(
++        "/api/auth/register", json={"name": name, "email": email, "password": password}
++    )
++
++
++@pytest.mark.parametrize(
++    "password",
++    ["short1", "onlyletters", "12345678", "        ", "password123", "a1" + "x" * 80],
++)
++def test_register_rejects_weak_passwords(client, password):
++    r = _register(client, "weak@test.dev", password)
++    assert r.status_code == 422, password
++
++
++def test_register_rejects_blank_name_and_multibyte_overflow(client):
++    assert _register(client, "n1@test.dev", name="   ").status_code == 422
++    assert _register(client, "n2@test.dev", name="").status_code == 422
++    # 74 bytes: short in characters, over bcrypt's 72-byte limit in bytes
++    assert _register(client, "n3@test.dev", password="a1" + "\U0001F600" * 18).status_code == 422
++
++
++def test_email_is_case_insensitive_everywhere(client):
++    assert _register(client, "Mixed.Case@Test.dev").status_code == 201
++    assert _register(client, "mixed.case@test.dev").status_code == 409
++    assert _register(client, "  MIXED.CASE@TEST.DEV ").status_code == 409
++    r = client.post(
++        "/api/auth/login", json={"email": "MIXED.case@test.DEV", "password": "pass1234"}
++    )
++    assert r.status_code == 200
++    me = client.get(
++        "/api/auth/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"}
++    )
++    assert me.json()["email"] == "mixed.case@test.dev"
++
++
++def test_login_does_not_reveal_whether_the_email_exists(client):
++    unknown = client.post("/api/auth/login", json={"email": "ghost@test.dev", "password": "x1x1x1x1"})
++    wrong = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "wrong-pass1"})
++    assert unknown.status_code == wrong.status_code == 401
++    assert unknown.json() == wrong.json()
++
++
++def test_failed_login_throttle_locks_only_that_ip_email_pair(client, monkeypatch):
++    monkeypatch.setattr(get_settings(), "LOGIN_MAX_FAILURES", 3)
++    login_throttle.reset()
++    try:
++        bad = {"email": "u@test.dev", "password": "wrong-pass1"}
++        assert [client.post("/api/auth/login", json=bad).status_code for _ in range(3)] == [401] * 3
++        locked = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
++        assert locked.status_code == 429  # even the right password waits out the lockout
++        assert int(locked.headers["Retry-After"]) > 0
++        # another account from the same IP is unaffected
++        other = client.post("/api/auth/login", json={"email": "a@test.dev", "password": "pass1234"})
++        assert other.status_code == 200
++    finally:
++        login_throttle.reset()
++
++
++def test_successful_login_clears_the_failure_counter(client, monkeypatch):
++    monkeypatch.setattr(get_settings(), "LOGIN_MAX_FAILURES", 3)
++    login_throttle.reset()
++    try:
++        bad = {"email": "u@test.dev", "password": "wrong-pass1"}
++        for _ in range(2):
++            client.post("/api/auth/login", json=bad)
++        assert client.post(
++            "/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}
++        ).status_code == 200
++        for _ in range(2):  # counter restarted, so two more failures do not lock
++            assert client.post("/api/auth/login", json=bad).status_code == 401
++    finally:
++        login_throttle.reset()
++
++
++def test_access_token_is_short_lived_and_typed(client):
++    r = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
++    claims = decode_token(r.json()["access_token"])
++    assert claims["typ"] == "access"
++    assert claims["exp"] - claims["iat"] == get_settings().JWT_EXPIRE_MINUTES * 60
++    assert get_settings().JWT_EXPIRE_MINUTES <= 30
++
++
++def test_refresh_token_cannot_be_used_as_an_access_token(client):
++    r = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
++    resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {r.json()['refresh_token']}"})
++    assert resp.status_code == 401
++
++
++def test_logout_works_with_an_expired_access_token(client):
++    login = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}).json()
++    me_id = decode_token(login["access_token"])["sub"]
++    expired = create_access_token({"sub": me_id}, expires_delta=timedelta(minutes=-5))
++    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {expired}"}).status_code == 401
++    r = client.post(
++        "/api/auth/logout",
++        headers={"Authorization": f"Bearer {expired}"},
++        json={"refresh_token": login["refresh_token"]},
++    )
++    assert r.status_code == 200 and r.json()["revoked_refresh_tokens"] == 1
++    assert client.post("/api/auth/refresh", json={"refresh_token": login["refresh_token"]}).status_code == 401
++
++
++def test_logout_without_any_credentials_is_rejected(client):
++    assert client.post("/api/auth/logout").status_code == 401
++
++
++def test_replayed_refresh_token_inside_grace_window_is_just_rejected(client):
++    first = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}).json()
++    second = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]}).json()
++    replay = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]})
++    assert replay.status_code == 401 and "already used" in replay.json()["detail"]
++    # a two-tab race must not log the user out: the successor still works
++    assert client.post("/api/auth/refresh", json={"refresh_token": second["refresh_token"]}).status_code == 200
++
++
++def test_replayed_refresh_token_after_grace_window_revokes_every_session(client, monkeypatch):
++    first = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}).json()
++    second = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]}).json()
++    monkeypatch.setattr(get_settings(), "REFRESH_REUSE_GRACE_SECONDS", -1)
++    replay = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]})
++    assert replay.status_code == 401 and "reuse" in replay.json()["detail"].lower()
++    # the thief's copy and the victim's live successor are both dead now
++    dead = client.post("/api/auth/refresh", json={"refresh_token": second["refresh_token"]})
++    assert dead.status_code == 401 and "revoked" in dead.json()["detail"].lower()
++
++
++def test_cors_allows_configured_origin_and_blocks_others(client):
++    ok = client.options(
++        "/api/auth/login",
++        headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"},
++    )
++    assert ok.headers.get("access-control-allow-origin") == "http://localhost:5173"
++    bad = client.options(
++        "/api/auth/login",
++        headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"},
++    )
++    assert "access-control-allow-origin" not in bad.headers
++
++
++def test_parse_cors_wildcards_match_one_label_only():
++    import re
++
++    exact, regex = parse_cors(
++        "https://app.example.com, https://*.vercel.app", "https://front.example.com", production=True
++    )
++    assert exact == ["https://app.example.com", "https://front.example.com"]
++    assert "http://localhost:5173" not in exact  # dev origins are off in production
++    assert re.match(regex, "https://substationiq-git-main.vercel.app")
++    for hostile in (
++        "https://evil.com",
++        "https://a.vercel.app.evil.com",
++        "https://evil.com/.vercel.app",
++        "https://x.y.vercel.app",
++        "http://x.vercel.app",
++    ):
++        assert not re.match(regex, hostile), hostile
++
++
++def test_frontend_url_is_always_an_allowed_origin():
++    exact, _ = parse_cors("", "https://substationiq.vercel.app/", production=True)
++    assert exact == ["https://substationiq.vercel.app"]
++
++
++def test_unknown_keys_in_env_file_do_not_crash_startup(tmp_path):
++    env = tmp_path / ".env"
++    env.write_text("REDIS_URL=redis://x:6379/0\nSOMETHING_NEW=1\nCORS_ALLOW_ORIGINS=https://a.app\n")
++
++    class FromFile(Settings):
++        class Config:
++            env_file = str(env)
++            case_sensitive = True
++            extra = "ignore"
++
++    s = FromFile()
++    assert s.CORS_ALLOW_ORIGINS == "https://a.app" and s.REDIS_URL == "redis://x:6379/0"
++
++
++def test_production_refuses_unsafe_configuration():
++    unsafe = Settings(APP_ENV="production", JWT_SECRET="change-me", CORS_ALLOW_ORIGINS="")
++    with pytest.raises(RuntimeError) as err:
++        unsafe.assert_production_ready()
++    assert "JWT_SECRET" in str(err.value) and "CORS_ALLOW_ORIGINS" in str(err.value)
++    Settings(APP_ENV="production", JWT_SECRET="x" * 40, CORS_ALLOW_ORIGINS="https://a.app").assert_production_ready()
++    Settings(APP_ENV="development").assert_production_ready()  # dev stays permissive
++
++
++def test_demo_passwords_can_be_overridden(monkeypatch):
++    from app.scripts.seed import ensure_demo_users
++    from app.core.security import verify_password
++
++    monkeypatch.setenv("DEMO_PASSWORD_ADMIN", "a-private-admin-pass-9")
++    db = SessionLocal()
++    try:
++        db.query(User).filter(User.email == "admin@substationiq.dev").delete()
++        db.commit()
++        ensure_demo_users(db)
++        admin = db.query(User).filter(User.email == "admin@substationiq.dev").one()
++        assert verify_password("a-private-admin-pass-9", admin.password_hash)
++        assert not verify_password("admin1234", admin.password_hash)
++    finally:
++        db.close()
++
++
++# ── Deploy regression: the exact Render/Vercel failure (CORS env vars were ignored) ──
++def test_cors_env_vars_reach_settings_and_allow_the_vercel_origin(monkeypatch):
++    """Render sets CORS_ALLOW_ORIGINS / CORS_ALLOW_ORIGIN_REGEX; both must be real
++    Settings fields, otherwise getattr() silently returns '' and only localhost works."""
++    import re
++    from app.core.security_middleware import build_cors
++
++    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app")
++    monkeypatch.setenv("CORS_ALLOW_ORIGIN_REGEX", r"https://frontend-[a-z0-9-]+ayush-840s-projects\.vercel\.app")
++    monkeypatch.setenv("APP_ENV", "production")
++    s = Settings()
++    assert s.CORS_ALLOW_ORIGINS and s.CORS_ALLOW_ORIGIN_REGEX
++    exact, regex = build_cors(s)
++    assert "https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app" in exact
++    assert re.fullmatch(regex, "https://frontend-abc123-ayush-840s-projects.vercel.app")
++    assert not re.fullmatch(regex, "https://evil.vercel.app")
++
++
++def test_invalid_cors_regex_fails_at_startup_not_at_first_request(monkeypatch):
++    import re
++    from app.core.security_middleware import build_cors
++
++    monkeypatch.setenv("CORS_ALLOW_ORIGIN_REGEX", "https://(unclosed")
++    with pytest.raises(re.error):
++        build_cors(Settings())
++
+diff --git a/deployment-notes.md b/deployment-notes.md
+index 815ea2e..677f9b3 100644
+--- a/deployment-notes.md
++++ b/deployment-notes.md
+@@ -1,5 +1,8 @@
+ # Deployment notes
+ 
++> **Start with [`docs/DEPLOY_FIX_TRD.md`](docs/DEPLOY_FIX_TRD.md)** — it supersedes the CORS, Docker, Vercel and
++> URL statements below, which described the setup before the Render/Vercel failures were diagnosed.
++
+ This file complements `render.yaml`, `vercel.json`, and the Dockerfiles with
+ the reasoning behind the deployment setup and the current status of each
+ concern. It is not consumed by Render or Vercel; it is for humans
+@@ -19,7 +22,7 @@ These must be set in the respective dashboards before the services work.
+ 
+ | Variable | Value | Notes |
+ | --- | --- | --- |
+-| `VITE_API_URL` | `https://backend-h8ikkpyfy-ayush-840s-projects.onrender.com` | Must match the live backend URL. The current value in `frontend/.env.local` is empty, which breaks the API client in production. |
++| `VITE_API_URL` | `https://<your-render-service>.onrender.com` | Copy the exact URL shown at the top of the Render service page (a Render URL is `<service-name>.onrender.com`, with no hash or team name). No trailing slash, no `/api`. The Vercel build now fails with a clear message if this is missing or wrong (`frontend/scripts/check-env.mjs`). |
+ | `VITE_DEMO_MODE` | `true` | Optional. Shows demo credentials on the login page. |
+ 
+ `vercel.json` only configures rewrites; the API base URL comes from
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 1cf6fb4..6eaa9d8 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -41,7 +41,10 @@ services:
+     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+ 
+   backend:
+-    build: ./backend
++    build:
++      context: ./backend
++      args:
++        INSTALL_HEAVY: ${INSTALL_HEAVY:-false}
+     env_file: .env
+     environment:
+       - DATABASE_URL=postgresql://substation:${POSTGRES_PASSWORD:-substation}@postgres:5432/substationiq
+@@ -51,9 +54,8 @@ services:
+       - CHROMA_PATH=/app/data/chroma
+       - FRONTEND_URL=http://localhost:5173
+       - CORS_ALLOW_ORIGINS=http://localhost:5173
+-      - REDIS_URL=redis://redis:6379/0
+-      - RATE_LIMIT_LOGIN=5/minute
+-      - RATE_LIMIT_CHAT=30/minute
++      - APP_ENV=development
++      - SEED_DEMO_USERS=true
+     depends_on:
+       postgres:
+         condition: service_healthy
+@@ -72,20 +74,6 @@ services:
+              python -m app.scripts.seed &&
+              uvicorn app.main:app --host 0.0.0.0 --port 8000"
+ 
+-  worker:
+-    build: ./backend
+-    env_file: .env
+-    environment:
+-      - DATABASE_URL=postgresql://substation:${POSTGRES_PASSWORD:-substation}@postgres:5432/substationiq
+-      - MONGO_URL=mongodb://mongo:27017
+-      - MONGO_DB=substationiq
+-      - REDIS_URL=redis://redis:6379/0
+-      - CHROMA_PATH=/app/data/chroma
+-    depends_on:
+-      - backend
+-      - redis
+-    command: arq app.worker.WorkerSettings
+-
+   frontend:
+     build: ./frontend
+     environment:
+diff --git a/docs/DEPLOY_FIX_TRD.md b/docs/DEPLOY_FIX_TRD.md
+new file mode 100644
+index 0000000..b4c7b6c
+--- /dev/null
++++ b/docs/DEPLOY_FIX_TRD.md
+@@ -0,0 +1,163 @@
++# TRD — Fixing the Render + Vercel deployment of SubstationIQ
++
++| | |
++|---|---|
++| Version | 1.0 (27 Oct 2026) |
++| Applies to | `main` at commit `57e11f2` and the patch that accompanies this document |
++| Scope | Render (FastAPI backend), Vercel (React/Vite frontend), and the register / login flow that sits across both |
++| Evidence rule | Every finding is marked **Reproduced** (I ran it), **Measured** (taken from package metadata or the docs), or **Inferred** (likely, but I could not see your Render/Vercel logs) |
++
++---
++
++## 1. Summary
++
++The site fails in three independent places. Fixing only one of them still leaves a broken site, which is why it has felt like "it keeps breaking".
++
++| # | Where | What a user sees | Root cause | Evidence |
++|---|-------|------------------|------------|----------|
++| F1 | Vercel | Blank white page for everyone | `copy.components` / `copy.errors` do not exist (the strings live under `copy.pages.*`), so React throws while loading `SafetyBlock` and renders nothing | **Reproduced** in headless Chromium on current `main`: `TypeError: Cannot read properties of undefined (reading 'safetyBlock')` |
++| F2 | Render ↔ browser | "Failed to fetch" on register and login | `CORS_ALLOW_ORIGINS` / `CORS_ALLOW_ORIGIN_REGEX` are **not fields of `Settings`**, so `getattr(settings, ..., "")` always returns `""`. The env vars in `render.yaml` are ignored and only `localhost` is allowed | **Reproduced**: preflight from your Vercel origin returned `400 Disallowed CORS origin` |
++| F3 | Render build / boot | Build timeout, out-of-memory, or "No open ports detected" | The Dockerfile installs `requirements-heavy.txt` (torch, sentence-transformers, chromadb, spaCy, OCR) on a free 512 MB instance. The app does not need them to start | **Reproduced** that the app imports in 1.2 s, seeds in 6 s and uses ~114 MB RAM without them. **Measured**: the default Linux `torch` pulls ~555 MB plus `triton` 248 MB and CUDA libraries (cudnn 766 MB, cublas 581, cusparse 366, nccl 352, cusolver 338, cufft 201 …), i.e. well over 3 GB. The failure itself is **Inferred** (no Render logs seen) |
++| F4 | Render blueprint | Blueprint rejected, or services not created | `render.yaml` puts Redis under `databases:` and has a top-level `disk:`. In the Blueprint spec a Redis-compatible store is `type: keyvalue` under `services:`, and `disk` belongs to a single service | **Measured** against Render's YAML reference. Free web services do not support persistent disks (verify in your dashboard) |
++| F5 | Vercel routing | Refreshing `/chat` or opening a deep link gives 404 | `vercel.json` sits in the repo root, but the project is named `frontend`, so its Root Directory is almost certainly `frontend`. Vercel reads `vercel.json` from the Root Directory, so the SPA rewrite is never applied | **Inferred** (project name). Cheap to confirm in Settings → General → Root Directory |
++| F6 | Vercel → Render | Every API call fails even after F1/F2 are fixed | The documented `VITE_API_URL` is `https://backend-h8ikkpyfy-ayush-840s-projects.onrender.com`. A Render URL is `<service-name>.onrender.com`; the `-h8ikkpyfy-…-projects` shape is how **Vercel** names deployments. Also, if `VITE_API_URL` is empty, the catch-all rewrite answers `/api/...` with `index.html` | **Inferred**. I could not resolve either host from my sandbox (outbound traffic is allow-listed) |
++| F7 | Render proxy | One user's failed logins lock everyone out | uvicorn was started without `--proxy-headers`, so every request appears to come from Render's proxy IP and all users share one rate-limit bucket | **Reproduced** the limiter behaviour (5/min per IP); proxy effect is standard behaviour |
++| F8 | Auth quality | Weak passwords accepted, register answers 200, no replay protection, logout did not revoke the access token | See `AUTH` appendix | **Reproduced**, fixed, 25 regression tests added |
++
++---
++
++## 2. Goals and non-goals
++
++**Goals**
++1. Register → login → use the app works end to end on Vercel + Render **free** tiers.
++2. A wrong environment variable fails the *build* with a readable message, not the user's browser.
++3. The backend image builds in minutes and runs inside 512 MB.
++4. Every fix has an automated test or a one-line check you can run yourself.
++
++**Non-goals** (listed so nobody tries to fix them in this sprint): semantic document search on the free tier, multi-region, SSO, email verification.
++
++---
++
++## 3. Design decisions
++
++### 3.1 CORS (fixes F2)
++* `Settings` gains `CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGIN_REGEX`, `APP_ENV`, and `extra="ignore"` so a new key in `.env` can never crash startup again.
++* `FRONTEND_URL` is always an allowed origin.
++* Origins may contain `*` which matches **one** DNS label (so `https://*.vercel.app` cannot match `https://a.b.vercel.app` or `https://x.vercel.app.evil.com`).
++* `CORS_ALLOW_ORIGIN_REGEX` is validated with `re.compile` at startup; a bad pattern stops the boot instead of failing the first preflight.
++* **Do not use `https://.*\.vercel\.app`** in production: it allows every site hosted on Vercel. `render.yaml` ships the tight pattern `https://frontend-[a-z0-9-]*ayush-840s-projects\.vercel\.app`, which I tested against your production URL, a preview URL, and two hostile origins.
++* Tokens travel in the `Authorization` header, not cookies, so CORS here does not carry ambient credentials.
++
++### 3.2 Backend image (fixes F3)
++* One `Dockerfile` with `ARG INSTALL_HEAVY=false`. Default = `requirements.txt` only. `--build-arg INSTALL_HEAVY=true` adds the ML stack (CPU-only torch index) for a paid instance or local use.
++* The build ends with an import check, so a missing package fails the build in seconds.
++* `CMD` seeds (idempotent), then `exec uvicorn … --proxy-headers --forwarded-allow-ips='*'` (fixes F7).
++* Seeding creates **no demo users** unless `SEED_DEMO_USERS=true`; production refuses to start with that flag on.
++* `DATABASE_URL` accepts `postgres://` (rewritten to `postgresql://`) and the engine uses `pool_pre_ping=True`, because free Postgres closes idle connections.
++
++### 3.3 `render.yaml` (fixes F4)
++* `services:` → web (Docker, `healthCheckPath: /health`) + `type: keyvalue` (Redis, `ipAllowList: []` = internal only).
++* `databases:` → Postgres only. No `disk`.
++* `APP_ENV=production` turns on `assert_production_ready()`: JWT secret ≥ 32 chars and not a placeholder, CORS configured, demo users off.
++* `JWT_EXPIRE_MINUTES=15` (was 1440). The refresh token (7 days, rotating) keeps people signed in.
++
++### 3.4 Vercel (fixes F1, F5, F6)
++* F1: the 15 call sites now read `copy.pages.components.*` / `copy.pages.errors.*`; missing imports in `Login.tsx`, `common.tsx`, `Learn.tsx` added; the remaining type errors fixed so the build runs a **real** `tsc --noEmit` (it previously used `--noCheck`, which is how the crash shipped).
++* F5: `vercel.json` moves to `frontend/` and the rewrite excludes `/assets/`. The root copy is deleted.
++* F6: `frontend/scripts/check-env.mjs` runs as `prebuild`. On Vercel it fails the build if `VITE_API_URL` is empty, not `https://`, points at localhost, or ends in `/api`. `api/client.ts` also strips a trailing `/`.
++* Also fixed while testing: navigation tabs changed a state variable but never the URL, so every tab showed the Chat page; they are now real routes, and a trainee typing `/dga` is redirected home.
++
++### 3.5 Session handling in the browser
++Access token in memory; refresh token in `localStorage` (the SPA and API are on different sites, so an HttpOnly cookie would be blocked as third-party). One shared refresh on 401 followed by one retry; sign out **only** when the server says the refresh token is invalid, never on a network error or cold start; readable messages for 422 arrays, `{detail}` and 429; "server is waking up" text while Render cold-starts.
++
++---
++
++## 4. Runbook (do these in order)
++
++### 4.1 Render
++1. Commit the patch to `main`. Do **not** keep the old blueprint: in Render, delete the old `substationiq-api` service if it never went healthy.
++2. Dashboard → **New → Blueprint** → pick the repo. It creates the web service, the Postgres database and the Key Value store.
++3. When prompted, set the `sync: false` variables: `MONGO_URL` (optional; leave blank to run without Mongo), `GEMINI_API_KEY` (optional; without it the app answers from the catalog in template mode).
++4. Wait for **Live**. Copy the URL at the top of the service page. That exact string is your `VITE_API_URL`.
++5. Check: `curl https://<service>.onrender.com/health` → `{"status":"healthy",…}`. First call after idle can take ~30–60 s.
++6. If the deploy fails, open **Logs** and search for the first `ERROR`/`Traceback`. The build now prints `ModuleNotFoundError` immediately instead of a 15-minute port timeout.
++
++### 4.2 Vercel
++1. Project → Settings → General → **Root Directory = `frontend`**.
++2. Settings → Environment Variables (Production **and** Preview): `VITE_API_URL = <the Render URL from 4.1>`. Leave `VITE_DEMO_MODE` unset (or `false`) in production.
++3. Deployments → latest → **Redeploy → untick "Use existing Build Cache"**. `VITE_*` values are baked in at build time; changing them without a rebuild does nothing.
++4. If the build stops with `Build stopped by scripts/check-env.mjs`, the message tells you which rule failed.
++5. Back on Render, set `FRONTEND_URL` and `CORS_ALLOW_ORIGINS` to the production URL Vercel shows (`render.yaml` already has `https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app`; change it if your production domain differs).
++
++### 4.3 Smoke test on the live site (2 minutes)
++```bash
++API=https://<service>.onrender.com
++WEB=https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
++curl -s  $API/health
++curl -si -X OPTIONS $API/api/auth/login -H "Origin: $WEB" \
++     -H 'Access-Control-Request-Method: POST' | grep -i "^HTTP\|allow-origin"   # 200 + your origin
++curl -s  -X POST $API/api/auth/register -H 'content-type: application/json' \
++     -d '{"name":"Test","email":"t@example.com","password":"goodpass1"}'        # 201
++```
++Then in the browser: register, reload the page (stays signed in), open `/history` directly (no 404), sign out.
++
++---
++
++## 5. Verification already done
++
++| Check | Result |
++|-------|--------|
++| Backend test suite on the patched `main` | **131 passed** (was 106 on the old tree; new tests cover CORS env wiring, regex validation, password policy, throttle, token type/expiry, replay detection, logout) |
++| Patched backend started with `APP_ENV=production`, core deps only, behind `--proxy-headers` | `/health` OK; preflight from the Vercel origin → **200** with `access-control-allow-origin`; preview URL → 200; `evil.vercel.app` → 400; weak password → 422; register → 201; login → 200 with `Cache-Control: no-store` and HSTS |
++| Memory / boot | ~114 MB RSS after requests; import 1.2 s; seed 6 s (catalog found at `/app/catalog`, the Docker layout) |
++| Frontend `npm ci && npm run build` with real type-check | passes; `prebuild` guard rejects empty / localhost / `/api` URLs and accepts a valid one |
++| Headless Chromium against built frontend + backend | login page renders (was blank); register → auto-login → reload keeps session → logout → wrong password and unknown e-mail give the same message → case-insensitive login; tab navigation changes the route; with a 1-minute access token, two simultaneous 401s caused **one** refresh and both requests were retried successfully |
++
++**Not verified (cannot be, from my environment):** a real Docker build (no daemon here), your live Render/Vercel logs, your live URLs. Treat F3, F5 and F6 as the most likely explanations until you confirm them with 4.1–4.3.
++
++---
++
++## 6. Risks and how to handle them
++
++| Risk | Impact | Mitigation |
++|------|--------|-----------|
++| Render free web service sleeps after ~15 min idle | First request 30–60 s; looks like "login broken" in a viva | UI shows a waking-up message; ping `/health` from a free uptime monitor 5 min before a demo |
++| Free Postgres is time-limited by Render | Accounts disappear when it expires | Export/seed script is idempotent; re-create before the viva; keep `SEED_DEMO_USERS=false` and register a fresh user |
++| Document upload / semantic search disabled on the slim image | Catalog, procedures, diagnosis, auth and history still work; uploaded PDFs are not indexed | Build with `INSTALL_HEAVY=true` on a paid instance, or demo locally with Docker Compose |
++| In-memory failed-login lockout resets on restart and is per instance | Brute-force protection is weaker after a redeploy | Redis storage is already used for slowapi when `REDIS_URL` is reachable; move the lockout to Redis if you scale past one instance |
++| Mongo not configured | Features that use it are off | Set `MONGO_URL` (Atlas free tier) when you need them |
++
++Rollback: every change is in one branch; revert the merge commit and Render/Vercel redeploy the previous version. The database schema is not changed by this patch.
++
++---
++
++## 7. Work plan (one commit per item, for the daily-commit portal)
++
++| Day | Commit message | Files |
++|-----|----------------|-------|
++| 1 | `fix(frontend): resolve copy paths and missing imports so the app renders` | `copy` call sites, `Login.tsx`, `common.tsx`, `Learn.tsx` |
++| 1 | `build(frontend): enable real type-check and fix remaining type errors` | `package.json`, pages |
++| 1 | `feat(frontend): single-flight token refresh, readable errors, real routes for tabs` | `api/client.ts`, `auth.tsx`, `App.tsx` |
++| 2 | `fix(api): wire CORS settings and validate origin regex at startup` | `config.py`, `security_middleware.py`, tests |
++| 2 | `fix(auth): password policy, 201 on register, replay detection, logout revokes access token` | `auth.py`, `schemas`, `security.py`, `refresh.py`, `login_throttle.py`, tests |
++| 2 | `build(docker): slim default image, proxy headers, build-time import check` | `Dockerfile`, `backend/Dockerfile`, `docker-compose.yml` |
++| 3 | `fix(deploy): valid render blueprint, vercel.json in frontend, env guard` | `render.yaml`, `frontend/vercel.json`, `scripts/check-env.mjs`, `deployment-notes.md` |
++| 3 | `docs: deployment TRD and live smoke-test results` | this file |
++
++---
++
++## 8. Appendix — register / login contract (what the code now guarantees)
++
++| Endpoint | Success | Errors |
++|----------|---------|--------|
++| `POST /api/auth/register` `{name,email,password}` | **201** user (role is always `trainee`) | 409 duplicate (case-insensitive); 422 weak input; 429 rate limit |
++| `POST /api/auth/login` | 200 `{access_token, refresh_token, token_type}` | 401 `Invalid email or password` (identical for unknown e-mail and wrong password, with equalised timing); 429 with `Retry-After` after 5 failures per IP+e-mail in 15 min |
++| `POST /api/auth/refresh` `{refresh_token}` | 200 new pair; old token revoked | 401 invalid/expired; using an already-rotated token after a 10 s grace window **revokes all of that user's sessions** |
++| `POST /api/auth/logout` | 200, idempotent, works with an expired access token | 401 only when no credentials at all |
++| `GET /api/auth/me` | 200 | 401 |
++
++* Password: 8–128 characters, ≤ 72 UTF-8 bytes (bcrypt limit), at least one letter and one digit, not on the common-password list.
++* E-mail: trimmed and lower-cased; looked up with `lower(email)`. Optional follow-up: add a unique index on `lower(email)` in a migration.
++* Access token: HS256, 15 minutes, claims `sub, jti, iat, exp, typ=access`; a refresh token can never be used as an access token.
++* Refresh token: opaque random value, only its SHA-256 is stored, 7 days, rotated on every use.
++* Next step if time allows: argon2 with transparent re-hash on login.
+diff --git a/frontend/package.json b/frontend/package.json
+index d3daa99..94b1fd4 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -5,7 +5,9 @@
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+-    "build": "tsc -b --noCheck && vite build",
++    "prebuild": "node scripts/check-env.mjs",
++    "typecheck": "tsc --noEmit -p .",
++    "build": "tsc --noEmit -p . && vite build",
+     "preview": "vite preview",
+     "test": "vitest run"
+   },
+diff --git a/frontend/scripts/check-env.mjs b/frontend/scripts/check-env.mjs
+new file mode 100644
+index 0000000..846a2c5
+--- /dev/null
++++ b/frontend/scripts/check-env.mjs
+@@ -0,0 +1,26 @@
++// Runs before `vite build` (npm "prebuild"). On Vercel a wrong or missing API URL does not
++// fail the build -- it ships a site whose login/register silently talk to the wrong host
++// (or get the SPA's index.html back through the catch-all rewrite). Fail here instead.
++const env = process.env
++const onVercel = env.VERCEL === '1' || env.CI_REQUIRE_API_URL === '1'
++const url = (env.VITE_API_URL || '').trim()
++const problems = []
++
++if (onVercel && env.ALLOW_EMPTY_API_URL !== '1') {
++  if (!url) {
++    problems.push('VITE_API_URL is not set. Add it in Vercel -> Project -> Settings -> Environment Variables (your Render backend URL, e.g. https://substationiq-api.onrender.com), then redeploy.')
++  } else {
++    if (!/^https:\/\//.test(url)) problems.push(`VITE_API_URL must start with https:// (got "${url}").`)
++    if (/localhost|127\.0\.0\.1/.test(url)) problems.push(`VITE_API_URL points at localhost ("${url}"); the deployed site cannot reach that.`)
++    if (/\/api\/?$/.test(url)) problems.push('VITE_API_URL must be the server root, without a trailing /api (the app adds /api/... itself).')
++  }
++}
++
++if (problems.length) {
++  console.error('\nBuild stopped by scripts/check-env.mjs:\n' + problems.map((p) => '  - ' + p).join('\n') + '\n')
++  process.exit(1)
++}
++if (env.VERCEL_ENV === 'production' && env.VITE_DEMO_MODE === 'true') {
++  console.warn('WARNING: VITE_DEMO_MODE=true on a production build shows demo credentials on the login page.')
++}
++console.log(url ? `API base: ${url}` : 'API base: (same origin / dev proxy)')
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index bef1743..635939a 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1,9 +1,10 @@
+ import { useState, useContext, createContext, useEffect } from 'react'
+ import { useAuth } from './auth'
+ import { useTheme, type Theme } from './hooks/useTheme'
+-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
++import { Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
+ import { Logo, Disclaimer, Wordmark } from './components/common'
+-import { SourcesPanel, type CitationItem } from './components/Sources'
++import { SourcesPanel } from './components/Sources'
++import type { CitationItem } from './components/Citation'
+ import Login from './pages/Login'
+ import Chat from './pages/Chat'
+ import Procedures from './pages/Procedures'
+@@ -18,7 +19,7 @@ import Catalog from './pages/Catalog'
+ import TestDetail from './pages/TestDetail'
+ import CatalogEditor from './pages/CatalogEditor'
+ 
+-type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'dev-components' | 'catalog-editor'
++type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'catalog' | 'dev-components' | 'catalog-editor'
+ 
+ const TABS: { id: Tab; label: string }[] = [
+   { id: 'chat', label: 'Ask' },
+@@ -32,6 +33,29 @@ const TABS: { id: Tab; label: string }[] = [
+   { id: 'catalog-editor', label: 'Catalog Editor' },
+ ]
+ 
++// Each tab is a real route, so the URL, back button and refresh all work.
++const TAB_PATHS: Record<Tab, string> = {
++  chat: '/chat',
++  procedures: '/procedures',
++  diagnosis: '/diagnosis',
++  dga: '/dga',
++  learn: '/learn',
++  history: '/history',
++  admin: '/admin',
++  'result-checker': '/result-checker',
++  catalog: '/catalog',
++  'catalog-editor': '/catalog/editor',
++  'dev-components': '/dev/components',
++}
++
++/** Longest matching path wins, so /catalog/editor is not mistaken for /catalog. */
++function tabForPath(pathname: string): Tab {
++  const hit = (Object.keys(TAB_PATHS) as Tab[])
++    .filter((t) => pathname === TAB_PATHS[t] || pathname.startsWith(TAB_PATHS[t] + '/'))
++    .sort((a, b) => TAB_PATHS[b].length - TAB_PATHS[a].length)[0]
++  return hit ?? 'chat'
++}
++
+ const ENGINEER_ONLY: Tab[] = ['diagnosis', 'dga', 'catalog-editor']
+ 
+ const ROLE_LABELS: Record<string, string> = {
+@@ -61,9 +85,13 @@ export function useSources() {
+ }
+ 
+ function Shell() {
+-  const { user, logout } = useAuth()
++  const { user: authUser, logout } = useAuth()
++  const user = authUser!  // Shell only renders behind PrivateRoute
+   const { theme, setTheme } = useTheme()
+-  const [tab, setTab] = useState<Tab>('chat')
++  const location = useLocation()
++  const navigate = useNavigate()
++  const tab = tabForPath(location.pathname)
++  const setTab = (t: Tab) => navigate(TAB_PATHS[t])
+   const [activeSource, setActiveSource] = useState<CitationItem | null>(null)
+ 
+   const isEngineerPlus = user.role === 'engineer' || user.role === 'admin'
+@@ -74,12 +102,7 @@ function Shell() {
+     ...allowedTabs.map((t) => t.id),
+     ...(user.role === 'admin' ? ['admin' as Tab] : []),
+   ]
+-  const isDevUrl = typeof window !== 'undefined' && (
+-    window.location.pathname === '/dev/components' ||
+-    window.location.hash === '#/dev/components' ||
+-    window.location.hash === '#dev-components'
+-  )
+-  const isDev = isDevUrl || tab === 'dev-components'
++  const isDev = tab === 'dev-components'
+ 
+   const activeTab: Tab = tabs.includes(tab) ? tab : 'chat'
+   const allTabDefs = [...TABS, { id: 'admin' as Tab, label: 'Admin' }]
+@@ -90,6 +113,9 @@ function Shell() {
+ 
+   const mobileTabs = tabs.slice(0, 4)
+ 
++  // A trainee typing /dga or /admin gets sent home instead of seeing a page the API will refuse.
++  if (!isDev && !tabs.includes(tab)) return <Navigate to="/chat" replace />
++
+   const openSource = (source: CitationItem) => {
+     setActiveSource(source)
+   }
+@@ -236,12 +262,11 @@ function Shell() {
+           </div>
+         </main>
+ 
+-        {/* Desktop sources panel — right drawer 360px */}
++        {/* Sources: right drawer on desktop, bottom sheet on mobile (the panel is responsive) */}
+         <SourcesPanel
+           source={activeSource}
+           isOpen={Boolean(activeSource)}
+           onClose={closeSources}
+-          className="hidden md:block"
+         />
+ 
+         {/* Mobile bottom bar — max 4 items, text labels always visible */}
+@@ -288,20 +313,20 @@ function Shell() {
+           })}
+         </nav>
+ 
+-        {/* Mobile sources bottom sheet */}
+-        <SourcesPanel
+-          source={activeSource}
+-          isOpen={Boolean(activeSource)}
+-          onClose={closeSources}
+-          className="md:hidden"
+-        />
+       </div>
+     </SourcesContext.Provider>
+   )
+ }
+ 
+ function PrivateRoute({ children }: { children: React.ReactNode }) {
+-  const { user } = useAuth()
++  const { user, booting } = useAuth()
++  if (booting) {
++    return (
++      <div role="status" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--muted)', background: 'var(--bg)', padding: 24, textAlign: 'center' }}>
++        Restoring your session… the server may be waking up, this can take up to a minute.
++      </div>
++    )
++  }
+   if (!user) return <Navigate to="/login" replace />
+   return <>{children}</>
+ }
+diff --git a/frontend/src/api/client.ts b/frontend/src/api/client.ts
+index e21c958..6cc9a74 100644
+--- a/frontend/src/api/client.ts
++++ b/frontend/src/api/client.ts
+@@ -1,70 +1,209 @@
+-const API_BASE = import.meta.env.VITE_API_URL || ''
++/**
++ * API client + session handling (see AUTH_TRD.md §6).
++ *
++ * - The access token lives in memory only (a page reload gets a new one through
++ *   the refresh token), so an XSS bug cannot read a long-lived credential from
++ *   localStorage.
++ * - The refresh token is kept in localStorage because the SPA (Vercel) and the
++ *   API (Render) are on different sites; an HttpOnly cookie would be blocked as
++ *   third-party. It rotates on every use and a replayed one ends the session.
++ * - A 401 triggers exactly one refresh (single-flight, shared by concurrent
++ *   requests) and one retry. The user is only signed out when the server says
++ *   the refresh token is invalid -- never because of a network error, a cold
++ *   start or a 5xx.
++ */
+ 
+-export function getToken(): string | null {
+-  return localStorage.getItem('siq_token')
++const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
++const REFRESH_KEY = 'siq_refresh'
++const USER_KEY = 'siq_user'
++
++export type StoredUser = { id: number; name: string; email: string; role: string }
++
++let accessToken: string | null = null
++
++const safeGet = (k: string): string | null => {
++  try { return localStorage.getItem(k) } catch { return null }
+ }
++const safeSet = (k: string, v: string | null) => {
++  try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v) } catch { /* private mode */ }
++}
++
++export const getToken = () => accessToken
++export const getRefreshToken = () => safeGet(REFRESH_KEY)
+ 
+-export function setToken(token: string | null) {
+-  if (token) localStorage.setItem('siq_token', token)
+-  else localStorage.removeItem('siq_token')
++export function setSession(tokens: { access_token: string; refresh_token?: string | null } | null) {
++  accessToken = tokens?.access_token ?? null
++  if (!tokens) safeSet(REFRESH_KEY, null)
++  else if (tokens.refresh_token) safeSet(REFRESH_KEY, tokens.refresh_token)
+ }
+ 
+-export function getStoredUser(): { id: number; name: string; email: string; role: string } | null {
++export function getStoredUser(): StoredUser | null {
+   try {
+-    const raw = localStorage.getItem('siq_user')
++    const raw = safeGet(USER_KEY)
+     return raw ? JSON.parse(raw) : null
+   } catch {
+     return null
+   }
+ }
++export const setStoredUser = (u: StoredUser | null) => safeSet(USER_KEY, u ? JSON.stringify(u) : null)
+ 
+-export function setStoredUser(user: { id: number; name: string; email: string; role: string } | null) {
+-  if (user) localStorage.setItem('siq_user', JSON.stringify(user))
+-  else localStorage.removeItem('siq_user')
++// ── session-expiry notification (AuthProvider subscribes) ────────────────────
++const expiryListeners = new Set<() => void>()
++export function onSessionExpired(fn: () => void) {
++  expiryListeners.add(fn)
++  return () => { expiryListeners.delete(fn) }
++}
++function expireSession() {
++  setSession(null)
++  setStoredUser(null)
++  expiryListeners.forEach((fn) => fn())
+ }
+ 
++// ── errors ───────────────────────────────────────────────────────────────────
+ export class ApiError extends Error {
+   status: number
+-  constructor(status: number, message: string) {
++  retryAfter?: number
++  constructor(status: number, message: string, retryAfter?: number) {
+     super(message)
+     this.status = status
++    this.retryAfter = retryAfter
++  }
++}
++
++/** Turn any backend error body into one readable sentence. */
++export function formatError(body: any, status: number, fallback: string): string {
++  const d = body?.detail ?? body?.error?.message ?? body?.message
++  if (typeof d === 'string' && d.trim()) return d
++  if (Array.isArray(d) && d.length) {
++    // FastAPI/Pydantic 422: [{loc:[..,'password'], msg:'Value error, ...'}]
++    return d
++      .map((e: any) => {
++        const msg = String(e?.msg ?? '').replace(/^Value error,\s*/i, '')
++        const field = Array.isArray(e?.loc) ? e.loc[e.loc.length - 1] : ''
++        return field && field !== 'body' ? `${field}: ${msg}` : msg
++      })
++      .filter(Boolean)
++      .join('. ')
++  }
++  if (status === 429) return 'Too many requests. Please wait a moment and try again.'
++  if (status >= 500) return 'The server had a problem. Please try again in a moment.'
++  return fallback || `Request failed (${status})`
++}
++
++const NETWORK_MSG = "Can't reach the server. It may be waking up (this can take up to a minute) — check your connection and try again."
++
++// ── refresh (single flight) ──────────────────────────────────────────────────
++type RefreshResult = 'ok' | 'invalid' | 'unavailable'
++let refreshing: Promise<RefreshResult> | null = null
++
++async function doRefresh(): Promise<RefreshResult> {
++  const refresh_token = getRefreshToken()
++  if (!refresh_token) return 'invalid'
++  let res: Response
++  try {
++    res = await fetch(`${API_BASE}/api/auth/refresh`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ refresh_token }),
++    })
++  } catch {
++    return 'unavailable' // offline / cold start: keep the session
++  }
++  if (res.ok) {
++    setSession(await res.json())
++    return 'ok'
+   }
++  if (res.status === 401 || res.status === 403) return 'invalid'
++  return 'unavailable' // 5xx, 429, ...
++}
++
++export function refreshSession(): Promise<RefreshResult> {
++  if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null })
++  return refreshing
++}
++
++/** Restore a session after a page load. 'ok' => accessToken is set. */
++export async function restoreSession(): Promise<RefreshResult> {
++  if (accessToken) return 'ok'
++  return refreshSession()
++}
++
++// ── fetch with auth + one retry ──────────────────────────────────────────────
++const AUTH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh']
++
++async function authedFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
++  const headers = new Headers(init.headers)
++  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
++  let res: Response
++  try {
++    res = await fetch(`${API_BASE}${path}`, { ...init, headers })
++  } catch {
++    throw new ApiError(0, NETWORK_MSG)
++  }
++  if (res.status === 401 && retry && !AUTH_PATHS.includes(path)) {
++    const r = await refreshSession()
++    if (r === 'ok') return authedFetch(path, init, false)
++    if (r === 'invalid') expireSession()
++    // 'unavailable': surface the 401 without signing the user out
++  }
++  return res
++}
++
++async function errorFrom(res: Response): Promise<ApiError> {
++  let body: any = null
++  try { body = await res.json() } catch { /* not json */ }
++  const ra = Number(res.headers.get('Retry-After')) || undefined
++  return new ApiError(res.status, formatError(body, res.status, res.statusText), ra)
+ }
+ 
+ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+-  const token = getToken()
+-  const res = await fetch(`${API_BASE}${path}`, {
+-    ...options,
+-    headers: {
+-      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+-      ...options.headers,
+-    },
+-  })
+-  if (!res.ok) {
+-    let detail = res.statusText
+-    try {
+-      const body = await res.json()
+-      detail = body.detail || JSON.stringify(body)
+-    } catch { /* not json */ }
+-    if (res.status === 401) {
+-      setToken(null)
+-      setStoredUser(null)
+-    }
+-    throw new ApiError(res.status, detail)
++  const headers = new Headers(options.headers)
++  if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
++    headers.set('Content-Type', 'application/json')
+   }
+-  return res.json()
++  const res = await authedFetch(path, { ...options, headers })
++  if (!res.ok) throw await errorFrom(res)
++  if (res.status === 204) return undefined as T
++  const text = await res.text()
++  return (text ? JSON.parse(text) : undefined) as T
+ }
+ 
++const json = (method: string, body?: unknown): RequestInit => ({
++  method,
++  body: body !== undefined ? JSON.stringify(body) : undefined,
++})
++
+ export const api = {
+   get: <T>(path: string) => request<T>(path),
+-  post: <T>(path: string, body?: unknown) =>
+-    request<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined }),
+-  put: <T>(path: string, body?: unknown) =>
+-    request<T>(path, { method: 'PUT', body: body !== undefined ? JSON.stringify(body) : undefined }),
++  post: <T>(path: string, body?: unknown) => request<T>(path, json('POST', body)),
++  put: <T>(path: string, body?: unknown) => request<T>(path, json('PUT', body)),
++  patch: <T>(path: string, body?: unknown) => request<T>(path, json('PATCH', body)),
+   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+-  postForm: <T>(path: string, form: FormData) =>
+-    request<T>(path, { method: 'POST', body: form }),
++  postForm: <T>(path: string, form: FormData) => request<T>(path, { method: 'POST', body: form }),
++  /** Authenticated file download (PDF export etc.) saved through a temporary link. */
++  download: async (path: string, filename: string) => {
++    const res = await authedFetch(path)
++    if (!res.ok) throw await errorFrom(res)
++    const url = URL.createObjectURL(await res.blob())
++    const a = document.createElement('a')
++    a.href = url
++    a.download = filename
++    a.click()
++    URL.revokeObjectURL(url)
++  },
++}
++
++/** Fire-and-forget wake-up call for hosts that sleep (Render free tier). */
++export function warmUp(): Promise<boolean> {
++  return fetch(`${API_BASE}/health`).then((r) => r.ok).catch(() => false)
++}
++
++/** Tell the server to end the session; never throws. */
++export async function logoutRemote(): Promise<void> {
++  const refresh_token = getRefreshToken()
++  try {
++    await authedFetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token }) }, false)
++  } catch { /* offline: local sign-out still happens */ }
+ }
+ 
+ export interface SSEEvent {
+@@ -78,20 +217,12 @@ export async function streamSSE(
+   body: unknown,
+   onEvent: (ev: SSEEvent) => void,
+ ): Promise<void> {
+-  const token = getToken()
+-  const res = await fetch(`${API_BASE}${path}`, {
++  const res = await authedFetch(path, {
+     method: 'POST',
+-    headers: {
+-      'Content-Type': 'application/json',
+-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+-    },
++    headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(body),
+   })
+-  if (!res.ok || !res.body) {
+-    let detail = res.statusText
+-    try { detail = (await res.json()).detail ?? detail } catch { /* ignore */ }
+-    throw new ApiError(res.status, detail)
+-  }
++  if (!res.ok || !res.body) throw await errorFrom(res)
+ 
+   const reader = res.body.getReader()
+   const decoder = new TextDecoder()
+diff --git a/frontend/src/auth.tsx b/frontend/src/auth.tsx
+index 3b0e800..668da6c 100644
+--- a/frontend/src/auth.tsx
++++ b/frontend/src/auth.tsx
+@@ -1,66 +1,111 @@
+-import React, { createContext, useContext, useEffect, useState } from 'react'
+-import { api, getToken, setToken, getStoredUser, setStoredUser } from './api/client'
++import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
++import {
++  api,
++  getRefreshToken,
++  getStoredUser,
++  logoutRemote,
++  onSessionExpired,
++  restoreSession,
++  setSession,
++  setStoredUser,
++  warmUp,
++} from './api/client'
+ import type { User } from './types'
+ 
+-type StoredUser = { id: number; name: string; email: string; role: string }
+-
+ interface AuthCtx {
+   user: User | null
++  /** a login/register request is in flight */
+   loading: boolean
++  /** restoring a saved session after a page load (cold starts can take a while) */
++  booting: boolean
+   login: (email: string, password: string) => Promise<void>
+   register: (name: string, email: string, password: string) => Promise<void>
+   logout: () => void
+ }
+ 
+-const Ctx = createContext<AuthCtx>(null as any)
++const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx)
++
++interface TokenPair {
++  access_token: string
++  refresh_token?: string | null
++}
+ 
+ export function AuthProvider({ children }: { children: React.ReactNode }) {
+-  const [user, setUser] = useState<User | null>(getStoredUser() as User | null)
++  const hasSavedSession = Boolean(getRefreshToken())
++  // A stored profile without a refresh token is a leftover from an old build.
++  const [user, setUser] = useState<User | null>(hasSavedSession ? (getStoredUser() as User | null) : null)
+   const [loading, setLoading] = useState(false)
++  const [booting, setBooting] = useState(hasSavedSession)
++
++  // Another part of the app (the API client) found the session is over.
++  useEffect(() => onSessionExpired(() => setUser(null)), [])
+ 
+   useEffect(() => {
+-    // Re-validate stored token on mount
+-    if (getToken()) {
+-      api.get<User>('/api/auth/me')
+-        .then(setUser)
+-        .catch(() => {
+-          setToken(null)
+-          setStoredUser(null)
+-          setUser(null)
+-        })
++    void warmUp() // wake a sleeping host while the user types
++    if (!hasSavedSession) return
++    let cancelled = false
++    ;(async () => {
++      const result = await restoreSession()
++      if (cancelled) return
++      if (result === 'ok') {
++        try {
++          const me = await api.get<User>('/api/auth/me')
++          if (cancelled) return
++          setStoredUser(me)
++          setUser(me)
++        } catch {
++          /* keep the cached profile; the next request will retry */
++        }
++      } else if (result === 'invalid') {
++        setSession(null)
++        setStoredUser(null)
++        setUser(null)
++      }
++      // 'unavailable' (offline / cold start): stay signed in with the cached profile
++      setBooting(false)
++    })()
++    return () => {
++      cancelled = true
+     }
+-  }, [])
++  }, [hasSavedSession])
+ 
+-  const login = async (email: string, password: string) => {
++  const login = useCallback(async (email: string, password: string) => {
+     setLoading(true)
+     try {
+-      const res = await api.post<{ access_token: string }>('/api/auth/login', { email, password })
+-      setToken(res.access_token)
+-      const me = await api.get<StoredUser>('/api/auth/me')
++      const tokens = await api.post<TokenPair>('/api/auth/login', { email, password })
++      setSession(tokens)
++      const me = await api.get<User>('/api/auth/me')
+       setStoredUser(me)
+-      setUser(me as User)
++      setUser(me)
++    } catch (err) {
++      setSession(null)
++      throw err
+     } finally {
+       setLoading(false)
+     }
+-  }
++  }, [])
+ 
+-  const register = async (name: string, email: string, password: string) => {
+-    setLoading(true)
+-    try {
+-      await api.post('/api/auth/register', { name, email, password })
++  const register = useCallback(
++    async (name: string, email: string, password: string) => {
++      setLoading(true)
++      try {
++        await api.post('/api/auth/register', { name, email, password })
++      } finally {
++        setLoading(false)
++      }
+       await login(email, password)
+-    } finally {
+-      setLoading(false)
+-    }
+-  }
++    },
++    [login],
++  )
+ 
+-  const logout = () => {
+-    setToken(null)
++  const logout = useCallback(() => {
++    void logoutRemote() // captures both tokens synchronously before the first await
++    setSession(null)
+     setStoredUser(null)
+     setUser(null)
+-  }
++  }, [])
+ 
+-  return <Ctx.Provider value={{ user, loading, login, register, logout }}>{children}</Ctx.Provider>
++  return <Ctx.Provider value={{ user, loading, booting, login, register, logout }}>{children}</Ctx.Provider>
+ }
+ 
+ export function useAuth() {
+diff --git a/frontend/src/components/SafetyBlock.tsx b/frontend/src/components/SafetyBlock.tsx
+index b10523c..9319688 100644
+--- a/frontend/src/components/SafetyBlock.tsx
++++ b/frontend/src/components/SafetyBlock.tsx
+@@ -3,14 +3,14 @@ import { copy } from '../copy'
+ 
+ export interface SafetyBlockProps {
+   label?: string
+-  rules?: string[]
++  rules?: readonly string[]
+   compact?: boolean
+   children?: React.ReactNode
+   style?: React.CSSProperties
+ }
+ 
+-const DEFAULT_LABEL = copy.components.safetyBlock.label
+-const DEFAULT_RULES = copy.components.safetyBlock.rules
++const DEFAULT_LABEL = copy.pages.components.safetyBlock.label
++const DEFAULT_RULES = copy.pages.components.safetyBlock.rules
+ 
+ /**
+  * SafetyBlock per 03-components.md section 3:
+diff --git a/frontend/src/components/TestSheet.tsx b/frontend/src/components/TestSheet.tsx
+index af490d0..7e25fdc 100644
+--- a/frontend/src/components/TestSheet.tsx
++++ b/frontend/src/components/TestSheet.tsx
+@@ -25,13 +25,13 @@ export interface TestSheetProps {
+ }
+ 
+ const SECTION_ORDER = [
+-  { key: 'equipment', label: copy.components.testSheet.sections.instruments },
+-  { key: 'steps', label: copy.components.testSheet.sections.procedure },
+-  { key: 'limits', label: copy.components.testSheet.sections.limits },
+-  { key: 'troubleshooting', label: copy.components.testSheet.sections.troubleshooting },
+-  { key: 'standards', label: copy.components.testSheet.sections.standards },
+-  { key: 'purpose', label: copy.components.testSheet.sections.purpose },
+-  { key: 'comparison', label: copy.components.testSheet.sections.comparison },
++  { key: 'equipment', label: copy.pages.components.testSheet.sections.instruments },
++  { key: 'steps', label: copy.pages.components.testSheet.sections.procedure },
++  { key: 'limits', label: copy.pages.components.testSheet.sections.limits },
++  { key: 'troubleshooting', label: copy.pages.components.testSheet.sections.troubleshooting },
++  { key: 'standards', label: copy.pages.components.testSheet.sections.standards },
++  { key: 'purpose', label: copy.pages.components.testSheet.sections.purpose },
++  { key: 'comparison', label: copy.pages.components.testSheet.sections.comparison },
+ ] as const
+ 
+ function parseLimitRows(text: string): LimitRow[] {
+@@ -358,7 +358,7 @@ export function TestSheet({
+                 aria-pressed={feedbackGiven === 1}
+                 onClick={() => handleFeedback(1)}
+               >
+-                {copy.components.testSheet.feedback.helpful}
++                {copy.pages.components.testSheet.feedback.helpful}
+               </button>
+               <button
+                 type="button"
+@@ -375,16 +375,16 @@ export function TestSheet({
+                 aria-pressed={feedbackGiven === -1}
+                 onClick={() => handleFeedback(-1)}
+               >
+-                {copy.components.testSheet.feedback.notHelpful}
++                {copy.pages.components.testSheet.feedback.notHelpful}
+               </button>
+               {feedbackBusy && (
+                 <span style={{ fontSize: '12px', color: 'var(--muted)', alignSelf: 'center' }}>
+-                  {copy.components.testSheet.feedback.saving}
++                  {copy.pages.components.testSheet.feedback.saving}
+                 </span>
+               )}
+               {feedbackError && (
+                 <span style={{ fontSize: '12px', color: 'var(--danger)' }} role="alert">
+-                  {feedbackError} — {copy.components.testSheet.feedback.error}
++                  {feedbackError} — {copy.pages.components.testSheet.feedback.error}
+                 </span>
+               )}
+             </div>
+diff --git a/frontend/src/components/common.tsx b/frontend/src/components/common.tsx
+index 654d138..0ed1e94 100644
+--- a/frontend/src/components/common.tsx
++++ b/frontend/src/components/common.tsx
+@@ -18,6 +18,7 @@ export * from './TestSheet'
+ 
+ import { SafetyBlock } from './SafetyBlock'
+ import { StatusText } from './StatusText'
++import { copy } from '../copy'
+ import { Citation as CitationComponent } from './Citation'
+ import { Wordmark } from './Wordmark'
+ 
+@@ -123,12 +124,12 @@ export function ConfidenceBadge({ value }: { value: number }) {
+         <path d="M7 1.5L13 12.5H1L7 1.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+         <path d="M7 5.5v3M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+       </svg>
+-      {copy.components.testSheet.confidence}
++      {copy.pages.components.testSheet.confidence}
+     </p>
+   )
+ }
+ 
+-export function Disclaimer() {
++export function Disclaimer({ style }: { style?: React.CSSProperties }) {
+   return (
+     <p
+       style={{
+@@ -136,6 +137,7 @@ export function Disclaimer() {
+         color: 'var(--muted)',
+         textAlign: 'center',
+         padding: '0 16px',
++        ...style,
+       }}
+     >
+       {copy.brand.footerDisclaimer}
+diff --git a/frontend/src/pages/Admin.tsx b/frontend/src/pages/Admin.tsx
+index e154203..f843a5e 100644
+--- a/frontend/src/pages/Admin.tsx
++++ b/frontend/src/pages/Admin.tsx
+@@ -255,7 +255,7 @@ function Documents() {
+               <tr key={d.id} style={{ borderBottom: '1px solid var(--rule)' }}>
+                 <td style={{ padding: '12px 14px', fontWeight: 500, color: 'var(--ink)' }}>{d.title}</td>
+                 <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{d.doc_type ?? '—'}</td>
+-                <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{d.equipment_class ?? '—'}</td>
++                <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{d.equipment_class_id ?? '—'}</td>
+                 <td style={{ padding: '12px 14px' }}>
+                   <StatusTextComp status={d.status} />
+                 </td>
+diff --git a/frontend/src/pages/Catalog.tsx b/frontend/src/pages/Catalog.tsx
+index b877f9e..bd7e73c 100644
+--- a/frontend/src/pages/Catalog.tsx
++++ b/frontend/src/pages/Catalog.tsx
+@@ -226,7 +226,7 @@ export default function Catalog() {
+                             background: test.status === 'verified' ? 'var(--success)' : test.status === 'draft' ? 'var(--warn)' : 'var(--muted)',
+                             flexShrink: 0,
+                           }} />
+-                          {test.status?.charAt(0).toUpperCase() + test.status?.slice(1) || '—'}
++                          {test.status ? test.status.charAt(0).toUpperCase() + test.status.slice(1) : '—'}
+                         </span>
+                       </td>
+                     </tr>
+@@ -255,7 +255,7 @@ export default function Catalog() {
+                     <span><strong>Category:</strong> {test.category || '—'}</span>
+                     <span><strong>Standard:</strong> <span style={{ fontFamily: 'var(--font-data)' }}>{test.standard_code || '—'}</span></span>
+                     <span style={{ color: test.status === 'verified' ? 'var(--success)' : test.status === 'draft' ? 'var(--warn)' : 'var(--muted)' }}>
+-                      <strong>Status:</strong> {test.status?.charAt(0).toUpperCase() + test.status?.slice(1) || '—'}
++                      <strong>Status:</strong> {test.status ? test.status.charAt(0).toUpperCase() + test.status.slice(1) : '—'}
+                     </span>
+                   </div>
+                 </Link>
+diff --git a/frontend/src/pages/CatalogEditor.tsx b/frontend/src/pages/CatalogEditor.tsx
+index 7bb59ca..35d1023 100644
+--- a/frontend/src/pages/CatalogEditor.tsx
++++ b/frontend/src/pages/CatalogEditor.tsx
+@@ -98,7 +98,7 @@ export default function CatalogEditor() {
+     if (!equipId) { setTests([]); return }
+     const eq = equipment.find(e => e.id === equipId)
+     if (!eq) return
+-    api.get<any[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
++    api.get<any>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+       .then(res => setTests(Array.isArray(res) ? res : res.data ?? []))
+       .catch(() => {})
+   }, [equipId])
+@@ -162,13 +162,13 @@ export default function CatalogEditor() {
+       if (isNew) {
+         const res = await api.post<CatalogTest>('/api/catalog/tests', test)
+         setTest(res)
+-        setTestId(res.id)
++        setTestId(res.id ?? null)
+         setIsNew(false)
+         // Refresh list
+         if (equipId) {
+           const eq = equipment.find(e => e.id === equipId)
+           if (eq) {
+-            api.get<any[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
++            api.get<any>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+               .then(res => setTests(Array.isArray(res) ? res : res.data ?? []))
+               .catch(() => {})
+           }
+@@ -214,7 +214,7 @@ export default function CatalogEditor() {
+           if (equipId) {
+             const eq = equipment.find(e => e.id === equipId)
+             if (eq) {
+-              api.get<any[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
++              api.get<any>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+                 .then(res => setTests(Array.isArray(res) ? res : res.data ?? []))
+                 .catch(() => {})
+             }
+diff --git a/frontend/src/pages/Chat.tsx b/frontend/src/pages/Chat.tsx
+index 44c6752..e2c82ca 100644
+--- a/frontend/src/pages/Chat.tsx
++++ b/frontend/src/pages/Chat.tsx
+@@ -1,6 +1,6 @@
+ import { useCallback, useEffect, useRef, useState } from 'react'
+ import { api, streamSSE } from '../api/client'
+-import type { ChatResult, Citation, ConversationDetail, EquipmentClass } from '../types'
++import type { ChatResult, ConversationDetail, EquipmentClass } from '../types'
+ import {
+   SectionLabel,
+   SafetyBlock,
+diff --git a/frontend/src/pages/History.tsx b/frontend/src/pages/History.tsx
+index 72f5171..0e95428 100644
+--- a/frontend/src/pages/History.tsx
++++ b/frontend/src/pages/History.tsx
+@@ -113,7 +113,7 @@ export default function History() {
+         </div>
+ 
+         <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+-          <Button variant="danger" disabled={openLoading} onClick={() => remove(open.id)}>
++          <Button variant="destructive" disabled={openLoading} onClick={() => remove(open.id)}>
+             {openLoading ? 'Deleting…' : 'Delete conversation'}
+           </Button>
+         </div>
+@@ -189,10 +189,7 @@ export default function History() {
+           <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+             {openRun.completed_at && (
+               <Button variant="secondary" onClick={() => {
+-                const url = `${import.meta.env.VITE_API_URL || ''}/api/procedures/${openRun.id}/export`
+-                fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('siq_token')}` } })
+-                  .then(r => { if (!r.ok) throw new Error('Export failed'); return r.blob() })
+-                  .then(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `procedure_run_${openRun.id}.pdf`; a.click() })
++                api.download(`/api/procedures/${openRun.id}/export`, `procedure_run_${openRun.id}.pdf`)
+                   .catch(e => alert(e.message))
+               }}>
+                 Export PDF
+diff --git a/frontend/src/pages/Learn.tsx b/frontend/src/pages/Learn.tsx
+index 40446a0..25e8326 100644
+--- a/frontend/src/pages/Learn.tsx
++++ b/frontend/src/pages/Learn.tsx
+@@ -1,4 +1,4 @@
+-import { FormEvent, useState } from 'react'
++import { FormEvent, useEffect, useState } from 'react'
+ import { api } from '../api/client'
+ import type { EquipmentClass, QuizQuestionT } from '../types'
+ import {
+@@ -162,7 +162,7 @@ export default function Learn() {
+       {questions.length === 0 && (
+         <form onSubmit={generate} style={{ border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--surface)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+           <SectionLabel topRule={false}>Generate Quiz</SectionLabel>
+-          <EquipmentFilter selected={topic === 'all' ? 'all' : topic} onChange={(c) => setTopic(c)} />
++          <EquipmentFilter selected={topic as EquipmentCategory} onChange={(c) => setTopic(c)} />
+           <div style={{ display: 'flex', gap: '12px' }}>
+             <Button variant="primary" type="submit" style={{ flex: 1 }}>
+               Generate quiz
+diff --git a/frontend/src/pages/Login.tsx b/frontend/src/pages/Login.tsx
+index cef5039..5d5440e 100644
+--- a/frontend/src/pages/Login.tsx
++++ b/frontend/src/pages/Login.tsx
+@@ -1,6 +1,7 @@
+ import { FormEvent, useState } from 'react'
++import { Navigate } from 'react-router-dom'
+ import { useAuth } from '../auth'
+-import { Wordmark, Disclaimer, AllEquipmentGlyph } from '../components/common'
++import { Wordmark, Disclaimer, AllEquipmentGlyph, Field, Input, Button } from '../components/common'
+ import { copy } from '../copy'
+ 
+ const DEMO_ACCOUNTS = {
+@@ -9,358 +10,242 @@ const DEMO_ACCOUNTS = {
+   admin: { email: 'admin@substationiq.dev', password: 'admin1234', label: 'Admin' },
+ } as const
+ 
++// Demo credentials are shown only in local dev or when explicitly enabled at build time.
+ const isDemoMode = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
+ 
++/** Same rules as the backend (schemas.UserCreate) so users get feedback before a round trip. */
++function validateRegistration(name: string, password: string): string | null {
++  if (!name.trim()) return 'Please enter your name.'
++  if (password.length < 8) return 'Password must be at least 8 characters.'
++  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'Password must contain at least one letter and one number.'
++  if (new TextEncoder().encode(password).length > 72) return 'Password is too long (72 bytes maximum).'
++  return null
++}
++
++const linkButton: React.CSSProperties = {
++  color: 'var(--primary)',
++  textDecoration: 'underline',
++  background: 'none',
++  border: 'none',
++  cursor: 'pointer',
++  fontSize: '14px',
++  fontFamily: 'var(--font-ui)',
++  marginLeft: '6px',
++}
++
+ export default function Login() {
+-  const { login, register, loading } = useAuth()
++  const { user, login, register, loading } = useAuth()
+   const [mode, setMode] = useState<'login' | 'register'>('login')
+   const [name, setName] = useState('')
+   const [email, setEmail] = useState('')
+   const [password, setPassword] = useState('')
+   const [error, setError] = useState('')
+ 
++  // Already signed in (e.g. opened /login in a second tab): go to the app.
++  if (user) return <Navigate to="/chat" replace />
++
++  const isLogin = mode === 'login'
++  const t = copy.pages.login
++
+   const submit = async (e: FormEvent) => {
+     e.preventDefault()
++    if (loading) return
+     setError('')
++    if (!email.trim() || !password) return setError('Enter your email and password.')
++    if (!isLogin) {
++      const problem = validateRegistration(name, password)
++      if (problem) return setError(problem)
++    }
+     try {
+-      if (mode === 'login') await login(email, password)
+-      else await register(name, email, password)
+-    } catch (err: any) {
+-      setError(err.message || copy.errors.authFailed)
++      if (isLogin) await login(email.trim(), password)
++      else await register(name.trim(), email.trim(), password)
++    } catch (err) {
++      setError(err instanceof Error && err.message ? err.message : copy.pages.errors.authFailed)
+     }
+   }
+ 
++  const switchMode = () => {
++    setMode(isLogin ? 'register' : 'login')
++    setError('')
++  }
++
+   const fillDemo = (role: keyof typeof DEMO_ACCOUNTS) => {
+     setMode('login')
++    setError('')
+     setEmail(DEMO_ACCOUNTS[role].email)
+     setPassword(DEMO_ACCOUNTS[role].password)
+   }
+ 
+-  const heading = mode === 'login' ? copy.pages.login.heading.login : copy.pages.login.heading.register
+-  const description = mode === 'login' ? copy.pages.login.description.login : copy.pages.login.description.register
+-  const submitLabel = loading ? copy.pages.login.submit.loading : (mode === 'login' ? copy.pages.login.submit.login : copy.pages.login.submit.register)
+-  const switchText = mode === 'login' ? copy.pages.login.switch.login : copy.pages.login.switch.register
+-  const switchAction = mode === 'login' ? copy.pages.login.switch.register : copy.pages.login.switch.login
+-
+   return (
+-    <div style={{
+-      minHeight: '100vh',
+-      display: 'flex',
+-      flexDirection: 'column',
+-      background: 'var(--bg)',
+-      color: 'var(--ink)',
+-    }}>
+-      {/* Desktop: two-column layout */}
+-      <div style={{
+-        display: 'grid',
+-        gridTemplateColumns: '1fr 1fr',
+-        minHeight: '100vh',
+-        maxWidth: '1000px',
+-        width: '100%',
+-        margin: '0 auto',
+-      }}>
+-        {/* Left column - Brand & Purpose */}
+-        <div style={{
+-          display: 'flex',
+-          flexDirection: 'column',
+-          justifyContent: 'center',
+-          alignItems: 'center',
+-          padding: '48px',
+-          background: 'var(--bg)',
+-          textAlign: 'center',
+-        }}>
+-          <Wordmark size="large" style={{ marginBottom: '24px' }} />
+-          <p style={{
+-            margin: '0 0 32px',
+-            fontSize: '18px',
+-            lineHeight: 1.5,
+-            color: 'var(--ink)',
+-            maxWidth: '400px',
+-          }}>
+-            {copy.brand.tagline}
+-          </p>
+-          <div style={{
+-            width: '120px',
+-            height: '120px',
+-            borderRadius: 'var(--radius)',
+-            background: 'var(--surface)',
+-            border: '1px solid var(--rule)',
++    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--ink)' }}>
++      <main
++        className="grid md:grid-cols-2"
++        style={{ flex: 1, width: '100%', maxWidth: 1000, margin: '0 auto' }}
++      >
++        {/* Brand column: stacks above the form on small screens */}
++        <section
++          style={{
+             display: 'flex',
+-            alignItems: 'center',
++            flexDirection: 'column',
+             justifyContent: 'center',
+-            color: 'var(--muted)',
+-          }}>
+-            <AllEquipmentGlyph size={60} />
+-          </div>
+-          {isDemoMode && (
+-            <div style={{
+-              marginTop: '32px',
+-              padding: '16px',
+-              border: '1px solid var(--rule)',
++            alignItems: 'center',
++            padding: '32px 24px',
++            textAlign: 'center',
++          }}
++        >
++          <Wordmark size="large" style={{ marginBottom: 16 }} />
++          <p style={{ margin: '0 0 24px', fontSize: 17, lineHeight: 1.5, maxWidth: 380 }}>{copy.brand.tagline}</p>
++          <div
++            style={{
++              width: 88,
++              height: 88,
+               borderRadius: 'var(--radius)',
+-              background: 'var(--surface-sunken)',
+-              textAlign: 'left',
+-            }}>
+-              <p style={{
+-                margin: '0 0 8px',
+-                fontSize: '11px',
+-                fontWeight: 600,
+-                textTransform: 'uppercase',
+-                letterSpacing: '0.08em',
+-                color: 'var(--muted)',
+-                fontFamily: 'var(--font-data)',
+-              }}>
+-                {copy.pages.login.demoAccounts.heading}
+-              </p>
+-              {(Object.keys(DEMO_ACCOUNTS) as (keyof typeof DEMO_ACCOUNTS)[]).map((role) => (
+-                <div key={role} style={{ fontSize: '12px', fontFamily: 'var(--font-data)', marginBottom: '4px', color: 'var(--ink)' }}>
+-                  {DEMO_ACCOUNTS[role].email} / {DEMO_ACCOUNTS[role].password} <span style={{ color: 'var(--muted)' }}>({DEMO_ACCOUNTS[role].label})</span>
+-                </div>
+-              ))}
+-            </div>
+-          )}
+-        </div>
+-
+-        {/* Right column - Form */}
+-        <div style={{
+-          display: 'flex',
+-          flexDirection: 'column',
+-          justifyContent: 'center',
+-          padding: '48px',
+-          background: 'var(--surface)',
+-          borderLeft: '1px solid var(--rule)',
+-        }}>
+-          <form onSubmit={submit} style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+-            <h1 style={{
+-              margin: '0 0 8px',
+-              fontSize: '24px',
+-              fontWeight: 600,
+-              color: 'var(--ink)',
+-              fontFamily: 'var(--font-display)',
+-            }}>
+-              {heading}
+-            </h1>
+-            <p style={{ margin: '0 0 24px', fontSize: '15px', color: 'var(--muted)' }}>
+-              {description}
+-            </p>
+-
+-            {mode === 'register' && (
+-              <Field label="Full Name" required>
+-                <Input
+-                  placeholder="Full name"
+-                  value={name}
+-                  onChange={(e) => setName(e.target.value)}
+-                  required
+-                  autoComplete="name"
+-                />
+-              </Field>
+-            )}
+-
+-            <Field label="Email" required>
+-              <Input
+-                type="email"
+-                placeholder="Email"
+-                value={email}
+-                onChange={(e) => setEmail(e.target.value)}
+-                required
+-                autoComplete="email"
+-              />
+-            </Field>
+-
+-            <Field label="Password" required>
+-              <Input
+-                type="password"
+-                placeholder="Password"
+-                value={password}
+-                onChange={(e) => setPassword(e.target.value)}
+-                required
+-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+-              />
+-            </Field>
+-
+-            {error && <p style={{ marginTop: '12px', color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
+-
+-            <Button variant="primary" type="submit" style={{ width: '100%', marginTop: '8px' }} disabled={loading}>
+-              {submitLabel}
+-            </Button>
++              background: 'var(--surface)',
++              border: '1px solid var(--rule)',
++              display: 'flex',
++              alignItems: 'center',
++              justifyContent: 'center',
++              color: 'var(--muted)',
++            }}
++          >
++            <AllEquipmentGlyph size={48} />
++          </div>
+ 
+-            <p style={{ marginTop: '16px', textAlign: 'center', fontSize: '14px', color: 'var(--muted)' }}>
+-              {switchText}
+-              <button
+-                type="button"
+-                onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
++          {isDemoMode && (
++            <div
++              style={{
++                marginTop: 24,
++                width: '100%',
++                maxWidth: 380,
++                padding: 16,
++                border: '1px solid var(--rule)',
++                borderRadius: 'var(--radius)',
++                background: 'var(--surface-sunken)',
++                textAlign: 'left',
++              }}
++            >
++              <p
+                 style={{
+-                  color: 'var(--primary)',
+-                  textDecoration: 'underline',
+-                  background: 'none',
+-                  border: 'none',
+-                  cursor: 'pointer',
+-                  fontSize: '14px',
+-                  fontFamily: 'var(--font-ui)',
++                  margin: '0 0 8px',
++                  fontSize: 11,
++                  fontWeight: 600,
++                  textTransform: 'uppercase',
++                  letterSpacing: '0.08em',
++                  color: 'var(--muted)',
++                  fontFamily: 'var(--font-data)',
+                 }}
+               >
+-                {switchAction}
+-              </button>
+-            </p>
+-          </form>
+-        </div>
+-      </div>
+-
+-      {/* Mobile: stacked layout */}
+-      <div className="md:hidden" style={{
+-        display: 'flex',
+-        flexDirection: 'column',
+-        minHeight: '100vh',
+-        maxWidth: '1000px',
+-        width: '100%',
+-        margin: '0 auto',
+-        padding: '24px 16px',
+-      }}>
+-        <div style={{
+-          display: 'flex',
+-          flexDirection: 'column',
+-          alignItems: 'center',
+-          textAlign: 'center',
+-          padding: '32px 0',
+-        }}>
+-          <Wordmark size="large" style={{ marginBottom: '16px' }} />
+-          <p style={{
+-            margin: '0 0 24px',
+-            fontSize: '17px',
+-            lineHeight: 1.5,
+-            color: 'var(--ink)',
+-            maxWidth: '360px',
+-          }}>
+-            {copy.brand.tagline}
+-          </p>
+-          <div style={{
+-            width: '80px',
+-            height: '80px',
+-            borderRadius: 'var(--radius)',
+-            background: 'var(--surface)',
+-            border: '1px solid var(--rule)',
+-            display: 'flex',
+-            alignItems: 'center',
+-            justifyContent: 'center',
+-            color: 'var(--muted)',
+-          }}>
+-            <AllEquipmentGlyph size={40} />
+-          </div>
+-          {isDemoMode && (
+-            <div style={{
+-              marginTop: '24px',
+-              width: '100%',
+-              maxWidth: '360px',
+-              padding: '16px',
+-              border: '1px solid var(--rule)',
+-              borderRadius: 'var(--radius)',
+-              background: 'var(--surface-sunken)',
+-              textAlign: 'left',
+-            }}>
+-              <p style={{
+-                margin: '0 0 8px',
+-                fontSize: '11px',
+-                fontWeight: 600,
+-                textTransform: 'uppercase',
+-                letterSpacing: '0.08em',
+-                color: 'var(--muted)',
+-                fontFamily: 'var(--font-data)',
+-              }}>
+-                {copy.pages.login.demoAccounts.heading}
++                {t.demoAccounts.heading}
+               </p>
+               {(Object.keys(DEMO_ACCOUNTS) as (keyof typeof DEMO_ACCOUNTS)[]).map((role) => (
+-                <div key={role} style={{ fontSize: '12px', fontFamily: 'var(--font-data)', marginBottom: '4px', color: 'var(--ink)' }}>
+-                  {DEMO_ACCOUNTS[role].email} / {DEMO_ACCOUNTS[role].password} <span style={{ color: 'var(--muted)' }}>({DEMO_ACCOUNTS[role].label})</span>
+-                </div>
++                <button
++                  key={role}
++                  type="button"
++                  onClick={() => fillDemo(role)}
++                  style={{
++                    display: 'block',
++                    width: '100%',
++                    textAlign: 'left',
++                    background: 'none',
++                    border: 'none',
++                    padding: '4px 0',
++                    cursor: 'pointer',
++                    fontSize: 12,
++                    fontFamily: 'var(--font-data)',
++                    color: 'var(--ink)',
++                  }}
++                >
++                  {DEMO_ACCOUNTS[role].email} <span style={{ color: 'var(--muted)' }}>({DEMO_ACCOUNTS[role].label}) — click to fill</span>
++                </button>
+               ))}
+             </div>
+           )}
+-        </div>
++        </section>
+ 
+-        <div style={{
+-          width: '100%',
+-          maxWidth: '400px',
+-          margin: '0 auto',
+-          padding: '16px 0 32px',
+-        }}>
+-          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+-            <h1 style={{
+-              margin: '0 0 8px',
+-              fontSize: '22px',
+-              fontWeight: 600,
+-              color: 'var(--ink)',
+-              fontFamily: 'var(--font-display)',
+-            }}>
+-              {heading}
++        {/* Form column */}
++        <section
++          style={{
++            display: 'flex',
++            flexDirection: 'column',
++            justifyContent: 'center',
++            padding: '32px 24px',
++            background: 'var(--surface)',
++            borderLeft: '1px solid var(--rule)',
++          }}
++        >
++          <form onSubmit={submit} noValidate style={{ width: '100%', maxWidth: 400, margin: '0 auto' }} aria-busy={loading}>
++            <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 600, fontFamily: 'var(--font-display)' }}>
++              {isLogin ? t.heading.login : t.heading.register}
+             </h1>
+-            <p style={{ margin: '0 0 16px', fontSize: '14px', color: 'var(--muted)' }}>
+-              {description}
++            <p style={{ margin: '0 0 24px', fontSize: 15, color: 'var(--muted)' }}>
++              {isLogin ? t.description.login : t.description.register}
+             </p>
+ 
+-            {mode === 'register' && (
+-              <Field label="Full Name" required>
++            {!isLogin && (
++              <Field label={t.fields.name} htmlFor="auth-name" required>
+                 <Input
+-                  placeholder="Full name"
++                  id="auth-name"
+                   value={name}
+                   onChange={(e) => setName(e.target.value)}
+-                  required
++                  maxLength={100}
+                   autoComplete="name"
+                 />
+               </Field>
+             )}
+ 
+-            <Field label="Email" required>
++            <Field label={t.fields.email} htmlFor="auth-email" required>
+               <Input
++                id="auth-email"
+                 type="email"
+-                placeholder="Email"
+                 value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+-                required
+                 autoComplete="email"
++                autoCapitalize="none"
++                spellCheck={false}
+               />
+             </Field>
+ 
+-            <Field label="Password" required>
++            <Field
++              label={t.fields.password}
++              htmlFor="auth-password"
++              required
++              hint={isLogin ? undefined : 'At least 8 characters, with a letter and a number.'}
++            >
+               <Input
++                id="auth-password"
+                 type="password"
+-                placeholder="Password"
+                 value={password}
+                 onChange={(e) => setPassword(e.target.value)}
+-                required
+-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
++                autoComplete={isLogin ? 'current-password' : 'new-password'}
+               />
+             </Field>
+ 
+-            {error && <p style={{ color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
++            {error && (
++              <p style={{ margin: '0 0 12px', color: 'var(--danger)', fontSize: 14 }} role="alert">
++                {error}
++              </p>
++            )}
+ 
+-            <Button variant="primary" type="submit" disabled={loading}>
+-              {submitLabel}
++            <Button variant="primary" type="submit" style={{ width: '100%' }} disabled={loading}>
++              {loading ? t.submit.loading : isLogin ? t.submit.login : t.submit.register}
+             </Button>
++            {loading && (
++              <p style={{ margin: '12px 0 0', fontSize: 13, color: 'var(--muted)', textAlign: 'center' }} role="status">
++                The server may be waking up — this can take up to a minute on the first request.
++              </p>
++            )}
+ 
+-            <p style={{ textAlign: 'center', fontSize: '14px', color: 'var(--muted)' }}>
+-              {switchText}
+-              <button
+-                type="button"
+-                onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+-                style={{
+-                  color: 'var(--primary)',
+-                  textDecoration: 'underline',
+-                  background: 'none',
+-                  border: 'none',
+-                  cursor: 'pointer',
+-                  fontSize: '14px',
+-                  fontFamily: 'var(--font-ui)',
+-                }}
+-              >
+-                {switchAction}
++            <p style={{ marginTop: 16, textAlign: 'center', fontSize: 14, color: 'var(--muted)' }}>
++              {isLogin ? "Don't have an account?" : 'Already registered?'}
++              <button type="button" onClick={switchMode} style={linkButton}>
++                {isLogin ? 'Register' : 'Sign in'}
+               </button>
+             </p>
+           </form>
+-        </div>
+-      </div>
++        </section>
++      </main>
+ 
+-      {/* Footer disclaimer */}
+-      <Disclaimer style={{ padding: '16px', textAlign: 'center', borderTop: '1px solid var(--rule)', background: 'var(--surface)' }} />
++      <Disclaimer style={{ padding: 16, borderTop: '1px solid var(--rule)', background: 'var(--surface)' }} />
+     </div>
+   )
+-}
+\ No newline at end of file
++}
+diff --git a/frontend/src/pages/Procedures.tsx b/frontend/src/pages/Procedures.tsx
+index 7c488ce..a669817 100644
+--- a/frontend/src/pages/Procedures.tsx
++++ b/frontend/src/pages/Procedures.tsx
+@@ -1,6 +1,7 @@
+ import { useEffect, useMemo, useState } from 'react'
+ import { useNavigate, useSearchParams } from 'react-router-dom'
+ import { api } from '../api/client'
++import { useAuth } from '../auth'
+ import type { EquipmentClass, ProcedureRun, TestSummary } from '../types'
+ import {
+   SectionLabel,
+@@ -26,6 +27,7 @@ interface TestDetail {
+ type View = 'list' | 'safety-gate' | 'step' | 'summary'
+ 
+ export default function Procedures() {
++  const { user } = useAuth()
+   const navigate = useNavigate()
+   const [searchParams, setSearchParams] = useSearchParams()
+   const [equipment, setEquipment] = useState<EquipmentClass[]>([])
+@@ -115,16 +117,7 @@ export default function Procedures() {
+ 
+   const exportPdf = () => {
+     if (!run) return
+-    const url = `${import.meta.env.VITE_API_URL || ''}/api/procedures/${run.id}/export`
+-    fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('siq_token')}` } })
+-      .then((r) => { if (!r.ok) throw new Error('Export failed'); return r.blob() })
+-      .then((blob) => {
+-        const a = document.createElement('a')
+-        a.href = URL.createObjectURL(blob)
+-        a.download = `procedure_run_${run.id}.pdf`
+-        a.click()
+-        URL.revokeObjectURL(a.href)
+-      })
++    api.download(`/api/procedures/${run.id}/export`, `procedure_run_${run.id}.pdf`)
+       .catch((e) => setError(e.message))
+   }
+ 
+@@ -159,7 +152,7 @@ export default function Procedures() {
+         </header>
+ 
+         <div style={{ marginBottom: '24px' }}>
+-          <EquipmentFilter selected={equipId ? equipment.find(e => e.id === equipId)?.name || 'all' : 'all'} onChange={(c) => {
++          <EquipmentFilter selected={(equipId ? equipment.find(e => e.id === equipId)?.name || 'all' : 'all') as EquipmentCategory} onChange={(c) => {
+             const eq = equipment.find(e => e.name === c)
+             setEquipId(eq?.id ?? null)
+           }} />
+@@ -407,7 +400,7 @@ export default function Procedures() {
+             <span><strong>Test:</strong> {detail.name}</span>
+             <span><strong>Equipment:</strong> {detail?.purpose || '—'}</span>
+             <span><strong>Date:</strong> {run.completed_at ? new Date(run.completed_at).toLocaleString() : '—'}</span>
+-            <span><strong>Operator:</strong> {run.operator || '—'}</span>
++            <span><strong>Operator:</strong> {user?.name || '—'}</span>
+           </div>
+         </header>
+ 
+diff --git a/frontend/src/pages/TestDetail.tsx b/frontend/src/pages/TestDetail.tsx
+index 94b817e..2c1757a 100644
+--- a/frontend/src/pages/TestDetail.tsx
++++ b/frontend/src/pages/TestDetail.tsx
+@@ -1,7 +1,8 @@
+ import { useEffect, useState } from 'react'
+ import { useNavigate, useParams } from 'react-router-dom'
+ import { api } from '../api/client'
+-import type { TestDetail, LimitRow } from '../types'
++import type { TestDetail } from '../types'
++import type { LimitRow } from '../components/LimitsTable'
+ import { TestSheet, LimitsTable } from '../components/common'
+ import { Button } from '../components/Button'
+ import { Wordmark, SectionLabel } from '../components/common'
+diff --git a/frontend/vercel.json b/frontend/vercel.json
+new file mode 100644
+index 0000000..4db2e43
+--- /dev/null
++++ b/frontend/vercel.json
+@@ -0,0 +1,13 @@
++{
++  "$schema": "https://openapi.vercel.sh/vercel.json",
++  "framework": "vite",
++  "buildCommand": "npm run build",
++  "outputDirectory": "dist",
++  "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/index.html" }],
++  "headers": [
++    {
++      "source": "/assets/(.*)",
++      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
++    }
++  ]
++}
+diff --git a/render.yaml b/render.yaml
+index 282b242..513f4c3 100644
+--- a/render.yaml
++++ b/render.yaml
+@@ -1,61 +1,84 @@
++# Render Blueprint — API (Docker), managed Postgres, Key Value (Redis).
++# Field names checked against https://render.com/docs/yaml-spec
++#
++# Free-tier facts that shape this file:
++#   * the web service sleeps after ~15 min idle (first request takes ~30-60 s);
++#   * no persistent disk on free web services; accounts live in Postgres, never on disk;
++#     the default image is the slim one (INSTALL_HEAVY=false), see Dockerfile;
++#   * free Postgres is time-limited by Render; upgrade or re-create before a demo/viva.
++
+ services:
+   - type: web
+     name: substationiq-api
+     runtime: docker
++    dockerfilePath: ./Dockerfile
++    dockerContext: .
+     plan: free
+-    buildCommand: ""
+-    startCommand: ""
++    healthCheckPath: /health
+     envVars:
+-      # LLM
+-      - key: LLM_PROVIDER
+-        value: gemini
+-      - key: GEMINI_API_KEY
+-        sync: false
+-      - key: GROQ_API_KEY
+-        sync: false
+-      - key: OLLAMA_MODEL
+-        value: llama3.1:8b
+-      - key: OLLAMA_BASE_URL
+-        value: http://localhost:11434
++      # --- security / auth (see AUTH_TRD.md) ---
++      - key: APP_ENV
++        value: production            # enables startup safety checks (strong secret, CORS set, no demo users)
++      - key: JWT_SECRET
++        generateValue: true
++      - key: JWT_ALGORITHM
++        value: HS256
++      - key: JWT_EXPIRE_MINUTES
++        value: "15"                  # short-lived access token; the refresh token keeps users signed in
++      - key: REFRESH_EXPIRE_DAYS
++        value: "7"
++      - key: REFRESH_REUSE_GRACE_SECONDS
++        value: "10"
++      - key: SEED_DEMO_USERS
++        value: "false"               # never ship public demo/admin passwords
++      - key: LOGIN_MAX_FAILURES
++        value: "5"
++      - key: LOGIN_LOCKOUT_SECONDS
++        value: "900"
++      - key: RATE_LIMIT_LOGIN
++        value: 30/minute
++      - key: RATE_LIMIT_REGISTER
++        value: 30/hour
++      - key: RATE_LIMIT_CHAT
++        value: 30/minute
+ 
+-      # Embeddings
+-      - key: EMBED_MODEL
+-        value: BAAI/bge-small-en-v1.5
++      # --- CORS: set these to YOUR Vercel URLs ---
++      - key: FRONTEND_URL
++        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
++      - key: CORS_ALLOW_ORIGINS
++        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
++      - key: CORS_ALLOW_ORIGIN_REGEX
++        # this team's Vercel preview/alias URLs only -- NOT every *.vercel.app site
++        value: 'https://frontend-[a-z0-9-]*ayush-840s-projects\.vercel\.app'
+ 
+-      # Database - PostgreSQL (managed by Render)
++      # --- data stores ---
+       - key: DATABASE_URL
+         fromDatabase:
+           name: substationiq-db
+           property: connectionString
+-
+-      # MongoDB (Atlas or self-hosted)
+-      - key: MONGO_URL
+-        sync: false
+-      - key: MONGO_DB
+-        value: substationiq
+-
+-      # Redis (managed by Render)
+       - key: REDIS_URL
+         fromService:
+-          type: redis
++          type: keyvalue
+           name: substationiq-redis
+           property: connectionString
++      - key: MONGO_URL
++        sync: false                  # paste your MongoDB Atlas URI in the dashboard
++      - key: MONGO_DB
++        value: substationiq
+ 
+-      # JWT
+-      - key: JWT_SECRET
+-        generateValue: true
+-      - key: JWT_ALGORITHM
+-        value: HS256
+-      - key: JWT_EXPIRE_MINUTES
+-        value: "1440"
+-      - key: REFRESH_EXPIRE_DAYS
+-        value: "7"
++      # --- LLM ---
++      - key: LLM_PROVIDER
++        value: gemini
++      - key: GEMINI_API_KEY
++        sync: false
++      - key: GROQ_API_KEY
++        sync: false
++      - key: EMBED_MODEL
++        value: BAAI/bge-small-en-v1.5
+ 
+-      # ChromaDB (persistent disk)
++      # --- retrieval / upload ---
+       - key: CHROMA_PATH
+-        value: /app/data/chroma
+-
+-      # Retrieval
++        value: /tmp/chroma           # only used by the INSTALL_HEAVY image
+       - key: CONFIDENCE_THRESHOLD
+         value: "0.35"
+       - key: TOP_K_VECTOR
+@@ -64,44 +87,19 @@ services:
+         value: "20"
+       - key: TOP_K_RERANK
+         value: "6"
+-
+-      # Upload
+       - key: MAX_UPLOAD_MB
+         value: "25"
+-
+-      # Frontend URL (for CORS, HSTS and link generation)
+-      - key: FRONTEND_URL
+-        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+-
+-      # CORS allow-list (comma-separated, exact origins only)
+-      - key: CORS_ALLOW_ORIGINS
+-        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+-
+-      # CORS origin regex (optional): allows all Vercel preview subdomains
+-      - key: CORS_ALLOW_ORIGIN_REGEX
+-        value: 'https://.*\.vercel\.app'
+-
+-      # Rate limiting
+-      - key: RATE_LIMIT_LOGIN
+-        value: 5/minute
+-      - key: RATE_LIMIT_CHAT
+-        value: 30/minute
+-
+-      # Logging
+       - key: LOG_LEVEL
+         value: INFO
+ 
++  - type: keyvalue
++    name: substationiq-redis
++    plan: free
++    maxmemoryPolicy: allkeys-lru
++    ipAllowList: []                  # internal connections only
++
+ databases:
+   - name: substationiq-db
+     databaseName: substationiq
+     user: substation
+     plan: free
+-
+-  - name: substationiq-redis
+-    plan: free
+-    maxmemoryPolicy: allkeys-lru
+-
+-disk:
+-  name: chroma-data
+-  mountPath: /app/data
+-  sizeGB: 1
+\ No newline at end of file
+diff --git a/vercel.json b/vercel.json
+deleted file mode 100644
+index dd37c45..0000000
+--- a/vercel.json
++++ /dev/null
+@@ -1,11 +0,0 @@
+-{
+-  "buildCommand": "npm run build",
+-  "outputDirectory": "dist",
+-  "framework": "vite",
+-  "rewrites": [
+-    {
+-      "source": "/(.*)",
+-      "destination": "/index.html"
+-    }
+-  ]
+-}
+\ No newline at end of file

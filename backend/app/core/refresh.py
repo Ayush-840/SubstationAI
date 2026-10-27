@@ -62,6 +62,15 @@ def find_valid_token(db: Session, raw: str) -> RefreshToken:
     if row.revoked_at is not None:
         raise HTTPException(status_code=401, detail="Refresh token revoked")
     if row.used_at is not None:
+        # A rotated-out token coming back means either a client race (two tabs
+        # refreshing at once) or a stolen copy. Inside the grace window assume
+        # the race; outside it, assume theft and end every session for the user.
+        age = (datetime.utcnow() - row.used_at).total_seconds()
+        if age > settings.REFRESH_REUSE_GRACE_SECONDS:
+            revoke_all_for_user(db, row.user_id)
+            raise HTTPException(
+                status_code=401, detail="Refresh token reuse detected; please sign in again"
+            )
         raise HTTPException(status_code=401, detail="Refresh token already used")
     if row.expires_at <= datetime.utcnow():
         raise HTTPException(status_code=401, detail="Refresh token expired")

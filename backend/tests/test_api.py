@@ -14,6 +14,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_test_db.name}"
 os.environ["LLM_PROVIDER"] = "none"
 os.environ["CHROMA_PATH"] = tempfile.mkdtemp(prefix="siq_chroma_")
 os.environ["TESTING"] = "1"
+os.environ.setdefault("RATE_LIMIT_LOGIN", "100000/minute")
+os.environ.setdefault("RATE_LIMIT_REGISTER", "100000/minute")
+os.environ.setdefault("LOGIN_MAX_FAILURES", "1000")
 
 import json  # noqa: E402
 from datetime import datetime, timedelta  # noqa: E402
@@ -126,7 +129,7 @@ def test_register_and_login(client):
         "/api/auth/register",
         json={"name": "X", "email": "x@test.dev", "password": "pass1234"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 201
     r = client.post(
         "/api/auth/login", json={"email": "x@test.dev", "password": "pass1234"}
     )
@@ -839,7 +842,7 @@ def test_register_defaults_to_trainee_role(client):
         "/api/auth/register",
         json={"name": "New Trainee", "email": "t7@test.dev", "password": "pass1234"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 201
     assert r.json()["role"] == "trainee"
 
 
@@ -906,7 +909,7 @@ def _register_and_login(client, email: str) -> dict:
         "/api/auth/register",
         json={"name": "Intruder", "email": email, "password": "pass1234"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 201
     return _login(client, email)
 
 
@@ -1011,3 +1014,244 @@ def test_procedure_run_ownership_blocks_other_users(client, user_headers):
         json={"step_no": 1, "done": True},
     )
     assert r.status_code == 200
+
+
+# --- Oct-24 audit: register/login hardening ------------------------------------
+# One test per defect found in the audit; each failed before its fix.
+
+from app.core import login_throttle  # noqa: E402
+from app.core.config import Settings, get_settings  # noqa: E402
+from app.core.security import create_access_token, decode_token  # noqa: E402
+from app.core.security_middleware import parse_cors  # noqa: E402
+
+
+def _register(client, email, password="pass1234", name="Tester"):
+    return client.post(
+        "/api/auth/register", json={"name": name, "email": email, "password": password}
+    )
+
+
+@pytest.mark.parametrize(
+    "password",
+    ["short1", "onlyletters", "12345678", "        ", "password123", "a1" + "x" * 80],
+)
+def test_register_rejects_weak_passwords(client, password):
+    r = _register(client, "weak@test.dev", password)
+    assert r.status_code == 422, password
+
+
+def test_register_rejects_blank_name_and_multibyte_overflow(client):
+    assert _register(client, "n1@test.dev", name="   ").status_code == 422
+    assert _register(client, "n2@test.dev", name="").status_code == 422
+    # 74 bytes: short in characters, over bcrypt's 72-byte limit in bytes
+    assert _register(client, "n3@test.dev", password="a1" + "\U0001F600" * 18).status_code == 422
+
+
+def test_email_is_case_insensitive_everywhere(client):
+    assert _register(client, "Mixed.Case@Test.dev").status_code == 201
+    assert _register(client, "mixed.case@test.dev").status_code == 409
+    assert _register(client, "  MIXED.CASE@TEST.DEV ").status_code == 409
+    r = client.post(
+        "/api/auth/login", json={"email": "MIXED.case@test.DEV", "password": "pass1234"}
+    )
+    assert r.status_code == 200
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"}
+    )
+    assert me.json()["email"] == "mixed.case@test.dev"
+
+
+def test_login_does_not_reveal_whether_the_email_exists(client):
+    unknown = client.post("/api/auth/login", json={"email": "ghost@test.dev", "password": "x1x1x1x1"})
+    wrong = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "wrong-pass1"})
+    assert unknown.status_code == wrong.status_code == 401
+    assert unknown.json() == wrong.json()
+
+
+def test_failed_login_throttle_locks_only_that_ip_email_pair(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "LOGIN_MAX_FAILURES", 3)
+    login_throttle.reset()
+    try:
+        bad = {"email": "u@test.dev", "password": "wrong-pass1"}
+        assert [client.post("/api/auth/login", json=bad).status_code for _ in range(3)] == [401] * 3
+        locked = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
+        assert locked.status_code == 429  # even the right password waits out the lockout
+        assert int(locked.headers["Retry-After"]) > 0
+        # another account from the same IP is unaffected
+        other = client.post("/api/auth/login", json={"email": "a@test.dev", "password": "pass1234"})
+        assert other.status_code == 200
+    finally:
+        login_throttle.reset()
+
+
+def test_successful_login_clears_the_failure_counter(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "LOGIN_MAX_FAILURES", 3)
+    login_throttle.reset()
+    try:
+        bad = {"email": "u@test.dev", "password": "wrong-pass1"}
+        for _ in range(2):
+            client.post("/api/auth/login", json=bad)
+        assert client.post(
+            "/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}
+        ).status_code == 200
+        for _ in range(2):  # counter restarted, so two more failures do not lock
+            assert client.post("/api/auth/login", json=bad).status_code == 401
+    finally:
+        login_throttle.reset()
+
+
+def test_access_token_is_short_lived_and_typed(client):
+    r = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
+    claims = decode_token(r.json()["access_token"])
+    assert claims["typ"] == "access"
+    assert claims["exp"] - claims["iat"] == get_settings().JWT_EXPIRE_MINUTES * 60
+    assert get_settings().JWT_EXPIRE_MINUTES <= 30
+
+
+def test_refresh_token_cannot_be_used_as_an_access_token(client):
+    r = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"})
+    resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {r.json()['refresh_token']}"})
+    assert resp.status_code == 401
+
+
+def test_logout_works_with_an_expired_access_token(client):
+    login = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}).json()
+    me_id = decode_token(login["access_token"])["sub"]
+    expired = create_access_token({"sub": me_id}, expires_delta=timedelta(minutes=-5))
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {expired}"}).status_code == 401
+    r = client.post(
+        "/api/auth/logout",
+        headers={"Authorization": f"Bearer {expired}"},
+        json={"refresh_token": login["refresh_token"]},
+    )
+    assert r.status_code == 200 and r.json()["revoked_refresh_tokens"] == 1
+    assert client.post("/api/auth/refresh", json={"refresh_token": login["refresh_token"]}).status_code == 401
+
+
+def test_logout_without_any_credentials_is_rejected(client):
+    assert client.post("/api/auth/logout").status_code == 401
+
+
+def test_replayed_refresh_token_inside_grace_window_is_just_rejected(client):
+    first = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}).json()
+    second = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]}).json()
+    replay = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]})
+    assert replay.status_code == 401 and "already used" in replay.json()["detail"]
+    # a two-tab race must not log the user out: the successor still works
+    assert client.post("/api/auth/refresh", json={"refresh_token": second["refresh_token"]}).status_code == 200
+
+
+def test_replayed_refresh_token_after_grace_window_revokes_every_session(client, monkeypatch):
+    first = client.post("/api/auth/login", json={"email": "u@test.dev", "password": "pass1234"}).json()
+    second = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]}).json()
+    monkeypatch.setattr(get_settings(), "REFRESH_REUSE_GRACE_SECONDS", -1)
+    replay = client.post("/api/auth/refresh", json={"refresh_token": first["refresh_token"]})
+    assert replay.status_code == 401 and "reuse" in replay.json()["detail"].lower()
+    # the thief's copy and the victim's live successor are both dead now
+    dead = client.post("/api/auth/refresh", json={"refresh_token": second["refresh_token"]})
+    assert dead.status_code == 401 and "revoked" in dead.json()["detail"].lower()
+
+
+def test_cors_allows_configured_origin_and_blocks_others(client):
+    ok = client.options(
+        "/api/auth/login",
+        headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"},
+    )
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    bad = client.options(
+        "/api/auth/login",
+        headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"},
+    )
+    assert "access-control-allow-origin" not in bad.headers
+
+
+def test_parse_cors_wildcards_match_one_label_only():
+    import re
+
+    exact, regex = parse_cors(
+        "https://app.example.com, https://*.vercel.app", "https://front.example.com", production=True
+    )
+    assert exact == ["https://app.example.com", "https://front.example.com"]
+    assert "http://localhost:5173" not in exact  # dev origins are off in production
+    assert re.match(regex, "https://substationiq-git-main.vercel.app")
+    for hostile in (
+        "https://evil.com",
+        "https://a.vercel.app.evil.com",
+        "https://evil.com/.vercel.app",
+        "https://x.y.vercel.app",
+        "http://x.vercel.app",
+    ):
+        assert not re.match(regex, hostile), hostile
+
+
+def test_frontend_url_is_always_an_allowed_origin():
+    exact, _ = parse_cors("", "https://substationiq.vercel.app/", production=True)
+    assert exact == ["https://substationiq.vercel.app"]
+
+
+def test_unknown_keys_in_env_file_do_not_crash_startup(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("REDIS_URL=redis://x:6379/0\nSOMETHING_NEW=1\nCORS_ALLOW_ORIGINS=https://a.app\n")
+
+    class FromFile(Settings):
+        class Config:
+            env_file = str(env)
+            case_sensitive = True
+            extra = "ignore"
+
+    s = FromFile()
+    assert s.CORS_ALLOW_ORIGINS == "https://a.app" and s.REDIS_URL == "redis://x:6379/0"
+
+
+def test_production_refuses_unsafe_configuration():
+    unsafe = Settings(APP_ENV="production", JWT_SECRET="change-me", CORS_ALLOW_ORIGINS="")
+    with pytest.raises(RuntimeError) as err:
+        unsafe.assert_production_ready()
+    assert "JWT_SECRET" in str(err.value) and "CORS_ALLOW_ORIGINS" in str(err.value)
+    Settings(APP_ENV="production", JWT_SECRET="x" * 40, CORS_ALLOW_ORIGINS="https://a.app").assert_production_ready()
+    Settings(APP_ENV="development").assert_production_ready()  # dev stays permissive
+
+
+def test_demo_passwords_can_be_overridden(monkeypatch):
+    from app.scripts.seed import ensure_demo_users
+    from app.core.security import verify_password
+
+    monkeypatch.setenv("DEMO_PASSWORD_ADMIN", "a-private-admin-pass-9")
+    db = SessionLocal()
+    try:
+        db.query(User).filter(User.email == "admin@substationiq.dev").delete()
+        db.commit()
+        ensure_demo_users(db)
+        admin = db.query(User).filter(User.email == "admin@substationiq.dev").one()
+        assert verify_password("a-private-admin-pass-9", admin.password_hash)
+        assert not verify_password("admin1234", admin.password_hash)
+    finally:
+        db.close()
+
+
+# ── Deploy regression: the exact Render/Vercel failure (CORS env vars were ignored) ──
+def test_cors_env_vars_reach_settings_and_allow_the_vercel_origin(monkeypatch):
+    """Render sets CORS_ALLOW_ORIGINS / CORS_ALLOW_ORIGIN_REGEX; both must be real
+    Settings fields, otherwise getattr() silently returns '' and only localhost works."""
+    import re
+    from app.core.security_middleware import build_cors
+
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app")
+    monkeypatch.setenv("CORS_ALLOW_ORIGIN_REGEX", r"https://frontend-[a-z0-9-]+ayush-840s-projects\.vercel\.app")
+    monkeypatch.setenv("APP_ENV", "production")
+    s = Settings()
+    assert s.CORS_ALLOW_ORIGINS and s.CORS_ALLOW_ORIGIN_REGEX
+    exact, regex = build_cors(s)
+    assert "https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app" in exact
+    assert re.fullmatch(regex, "https://frontend-abc123-ayush-840s-projects.vercel.app")
+    assert not re.fullmatch(regex, "https://evil.vercel.app")
+
+
+def test_invalid_cors_regex_fails_at_startup_not_at_first_request(monkeypatch):
+    import re
+    from app.core.security_middleware import build_cors
+
+    monkeypatch.setenv("CORS_ALLOW_ORIGIN_REGEX", "https://(unclosed")
+    with pytest.raises(re.error):
+        build_cors(Settings())
+

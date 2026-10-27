@@ -8,6 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.session import SessionLocal, engine, Base  # noqa: E402
 from app.db import models  # noqa: E402
+import os  # noqa: E402
+
+from sqlalchemy import func  # noqa: E402
+
+from app.core.config import get_settings  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
 from app.catalog.loader import (
     load_catalog_to_db,
@@ -17,7 +22,11 @@ from app.catalog.loader import (
 from app.db.models import User, UserRole  # noqa: E402
 from app.db.migrate import migrate_user_roles  # noqa: E402
 
-# Demo users (README credentials). Roles follow the Day-7 three-role model.
+# Demo users for local development and classroom demos. They are created only
+# when SEED_DEMO_USERS=true (see core/config.py). The defaults below are public
+# (they are in the README), so a deployment that enables demo users must
+# override at least the admin password:
+#   DEMO_PASSWORD_TRAINEE / DEMO_PASSWORD_ENGINEER / DEMO_PASSWORD_ADMIN
 DEMO_USERS = [
     ("Demo User", "demo@substationiq.dev", "demo1234", UserRole.TRAINEE),
     ("Demo Engineer", "engineer@substationiq.dev", "engineer1234", UserRole.ENGINEER),
@@ -27,8 +36,9 @@ DEMO_USERS = [
 
 def ensure_demo_users(db) -> None:
     """Insert any missing demo account; never touches existing rows."""
-    for name, email, password, role in DEMO_USERS:
-        user = db.query(User).filter(User.email == email).first()
+    for name, email, default_password, role in DEMO_USERS:
+        password = os.environ.get(f"DEMO_PASSWORD_{role.name}", default_password)
+        user = db.query(User).filter(func.lower(User.email) == email).first()
         if not user:
             db.add(
                 User(
@@ -46,7 +56,10 @@ def seed() -> None:
     migrate_user_roles(engine)
     db = SessionLocal()
     try:
-        ensure_demo_users(db)
+        if get_settings().SEED_DEMO_USERS:
+            ensure_demo_users(db)
+        else:
+            print("Demo users skipped (set SEED_DEMO_USERS=true to create them).")
 
         # Catalog + synonyms + sample documents
         load_catalog_to_db(db)
@@ -64,11 +77,8 @@ def seed() -> None:
         print(
             f"Seed complete: {equips} equipment classes, {tests} tests, {limits} limits"
         )
-        print(
-            "Users: demo@substationiq.dev / demo1234 (trainee)"
-            "  |  engineer@substationiq.dev / engineer1234 (engineer)"
-            "  |  admin@substationiq.dev / admin1234 (admin)"
-        )
+        if get_settings().SEED_DEMO_USERS:
+            print("Demo users created (development only): demo@ / engineer@ / admin@substationiq.dev")
     finally:
         db.close()
 

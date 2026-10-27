@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -32,15 +32,68 @@ class LogoutRequest(BaseModel):
     refresh_token: Optional[str] = None
 
 
+# Small deny-list of passwords that satisfy the letter+digit rule but are
+# guessed first by every credential-stuffing tool.
+COMMON_PASSWORDS = frozenset(
+    {
+        "password1", "password12", "password123", "passw0rd1", "qwerty123",
+        "qwerty1234", "abc12345", "abcd1234", "iloveyou1", "welcome1",
+        "welcome123", "admin123", "admin1234", "letmein123", "12345678a",
+        "a1234567", "1q2w3e4r", "test1234", "changeme1",
+    }
+)
+
+
+def _norm_email(value: str) -> str:
+    return value.strip().lower()
+
+
 class UserCreate(BaseModel):
-    name: str
+    """Registration input. Every rule here is also enforced by the tests."""
+
+    name: str = Field(min_length=1, max_length=100)
     email: EmailStr
-    password: str
+    # bcrypt silently ignores everything after byte 72, so we cap in *bytes*
+    # (the character cap alone would let 80 multi-byte characters through).
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("Name must not be blank")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _lower_email(cls, v: str) -> str:
+        return _norm_email(v)
+
+    @field_validator("password")
+    @classmethod
+    def _password_policy(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 bytes long")
+        if not v.strip():
+            raise ValueError("Password must not be blank")
+        if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
+            raise ValueError("Password must contain at least one letter and one digit")
+        if v.lower() in COMMON_PASSWORDS:
+            raise ValueError("That password is too common; choose another")
+        return v
 
 
 class UserLogin(BaseModel):
+    """Login input: normalised email, but no password policy (old accounts)."""
+
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("email")
+    @classmethod
+    def _lower_email(cls, v: str) -> str:
+        return _norm_email(v)
 
 
 class UserResponse(BaseModel):

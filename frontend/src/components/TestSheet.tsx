@@ -25,13 +25,13 @@ export interface TestSheetProps {
 }
 
 const SECTION_ORDER = [
-  { key: 'equipment', label: copy.components.testSheet.sections.instruments },
-  { key: 'steps', label: copy.components.testSheet.sections.procedure },
-  { key: 'limits', label: copy.components.testSheet.sections.limits },
-  { key: 'troubleshooting', label: copy.components.testSheet.sections.troubleshooting },
-  { key: 'standards', label: copy.components.testSheet.sections.standards },
-  { key: 'purpose', label: copy.components.testSheet.sections.purpose },
-  { key: 'comparison', label: copy.components.testSheet.sections.comparison },
+  { key: 'equipment', label: copy.pages.components.testSheet.sections.instruments },
+  { key: 'steps', label: copy.pages.components.testSheet.sections.procedure },
+  { key: 'limits', label: copy.pages.components.testSheet.sections.limits },
+  { key: 'troubleshooting', label: copy.pages.components.testSheet.sections.troubleshooting },
+  { key: 'standards', label: copy.pages.components.testSheet.sections.standards },
+  { key: 'purpose', label: copy.pages.components.testSheet.sections.purpose },
+  { key: 'comparison', label: copy.pages.components.testSheet.sections.comparison },
 ] as const
 
 function parseLimitRows(text: string): LimitRow[] {
@@ -358,7 +358,7 @@ export function TestSheet({
                 aria-pressed={feedbackGiven === 1}
                 onClick={() => handleFeedback(1)}
               >
-                {copy.components.testSheet.feedback.helpful}
+                {copy.pages.components.testSheet.feedback.helpful}
               </button>
               <button
                 type="button"
@@ -375,16 +375,16 @@ export function TestSheet({
                 aria-pressed={feedbackGiven === -1}
                 onClick={() => handleFeedback(-1)}
               >
-                {copy.components.testSheet.feedback.notHelpful}
+                {copy.pages.components.testSheet.feedback.notHelpful}
               </button>
               {feedbackBusy && (
                 <span style={{ fontSize: '12px', color: 'var(--muted)', alignSelf: 'center' }}>
-                  {copy.components.testSheet.feedback.saving}
+                  {copy.pages.components.testSheet.feedback.saving}
                 </span>
               )}
               {feedbackError && (
                 <span style={{ fontSize: '12px', color: 'var(--danger)' }} role="alert">
-                  {feedbackError} — {copy.components.testSheet.feedback.error}
+                  {feedbackError} — {copy.pages.components.testSheet.feedback.error}
                 </span>
               )}
             </div>

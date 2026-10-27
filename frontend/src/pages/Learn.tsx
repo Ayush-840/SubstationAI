@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { api } from '../api/client'
 import type { EquipmentClass, QuizQuestionT } from '../types'
 import {
@@ -162,7 +162,7 @@ export default function Learn() {
       {questions.length === 0 && (
         <form onSubmit={generate} style={{ border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--surface)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <SectionLabel topRule={false}>Generate Quiz</SectionLabel>
-          <EquipmentFilter selected={topic === 'all' ? 'all' : topic} onChange={(c) => setTopic(c)} />
+          <EquipmentFilter selected={topic as EquipmentCategory} onChange={(c) => setTopic(c)} />
           <div style={{ display: 'flex', gap: '12px' }}>
             <Button variant="primary" type="submit" style={{ flex: 1 }}>
               Generate quiz

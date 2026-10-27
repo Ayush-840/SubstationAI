@@ -18,6 +18,7 @@ export * from './TestSheet'
 
 import { SafetyBlock } from './SafetyBlock'
 import { StatusText } from './StatusText'
+import { copy } from '../copy'
 import { Citation as CitationComponent } from './Citation'
 import { Wordmark } from './Wordmark'
 
@@ -123,12 +124,12 @@ export function ConfidenceBadge({ value }: { value: number }) {
         <path d="M7 1.5L13 12.5H1L7 1.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
         <path d="M7 5.5v3M7 10h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
-      {copy.components.testSheet.confidence}
+      {copy.pages.components.testSheet.confidence}
     </p>
   )
 }
 
-export function Disclaimer() {
+export function Disclaimer({ style }: { style?: React.CSSProperties }) {
   return (
     <p
       style={{
@@ -136,6 +137,7 @@ export function Disclaimer() {
         color: 'var(--muted)',
         textAlign: 'center',
         padding: '0 16px',
+        ...style,
       }}
     >
       {copy.brand.footerDisclaimer}

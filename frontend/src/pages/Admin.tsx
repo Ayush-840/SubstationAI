@@ -255,7 +255,7 @@ function Documents() {
               <tr key={d.id} style={{ borderBottom: '1px solid var(--rule)' }}>
                 <td style={{ padding: '12px 14px', fontWeight: 500, color: 'var(--ink)' }}>{d.title}</td>
                 <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{d.doc_type ?? '—'}</td>
-                <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{d.equipment_class ?? '—'}</td>
+                <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{d.equipment_class_id ?? '—'}</td>
                 <td style={{ padding: '12px 14px' }}>
                   <StatusTextComp status={d.status} />
                 </td>

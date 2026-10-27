@@ -113,7 +113,7 @@ export default function History() {
         </div>
 
         <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-          <Button variant="danger" disabled={openLoading} onClick={() => remove(open.id)}>
+          <Button variant="destructive" disabled={openLoading} onClick={() => remove(open.id)}>
             {openLoading ? 'Deleting…' : 'Delete conversation'}
           </Button>
         </div>
@@ -189,10 +189,7 @@ export default function History() {
           <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
             {openRun.completed_at && (
               <Button variant="secondary" onClick={() => {
-                const url = `${import.meta.env.VITE_API_URL || ''}/api/procedures/${openRun.id}/export`
-                fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('siq_token')}` } })
-                  .then(r => { if (!r.ok) throw new Error('Export failed'); return r.blob() })
-                  .then(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `procedure_run_${openRun.id}.pdf`; a.click() })
+                api.download(`/api/procedures/${openRun.id}/export`, `procedure_run_${openRun.id}.pdf`)
                   .catch(e => alert(e.message))
               }}>
                 Export PDF

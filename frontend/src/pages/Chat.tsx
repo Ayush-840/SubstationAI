@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, streamSSE } from '../api/client'
-import type { ChatResult, Citation, ConversationDetail, EquipmentClass } from '../types'
+import type { ChatResult, ConversationDetail, EquipmentClass } from '../types'
 import {
   SectionLabel,
   SafetyBlock,

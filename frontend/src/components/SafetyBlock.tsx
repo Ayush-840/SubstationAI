@@ -3,14 +3,14 @@ import { copy } from '../copy'
 
 export interface SafetyBlockProps {
   label?: string
-  rules?: string[]
+  rules?: readonly string[]
   compact?: boolean
   children?: React.ReactNode
   style?: React.CSSProperties
 }
 
-const DEFAULT_LABEL = copy.components.safetyBlock.label
-const DEFAULT_RULES = copy.components.safetyBlock.rules
+const DEFAULT_LABEL = copy.pages.components.safetyBlock.label
+const DEFAULT_RULES = copy.pages.components.safetyBlock.rules
 
 /**
  * SafetyBlock per 03-components.md section 3:

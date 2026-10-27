@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { useAuth } from '../auth'
 import type { EquipmentClass, ProcedureRun, TestSummary } from '../types'
 import {
   SectionLabel,
@@ -26,6 +27,7 @@ interface TestDetail {
 type View = 'list' | 'safety-gate' | 'step' | 'summary'
 
 export default function Procedures() {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [equipment, setEquipment] = useState<EquipmentClass[]>([])
@@ -115,16 +117,7 @@ export default function Procedures() {
 
   const exportPdf = () => {
     if (!run) return
-    const url = `${import.meta.env.VITE_API_URL || ''}/api/procedures/${run.id}/export`
-    fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('siq_token')}` } })
-      .then((r) => { if (!r.ok) throw new Error('Export failed'); return r.blob() })
-      .then((blob) => {
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = `procedure_run_${run.id}.pdf`
-        a.click()
-        URL.revokeObjectURL(a.href)
-      })
+    api.download(`/api/procedures/${run.id}/export`, `procedure_run_${run.id}.pdf`)
       .catch((e) => setError(e.message))
   }
 
@@ -159,7 +152,7 @@ export default function Procedures() {
         </header>
 
         <div style={{ marginBottom: '24px' }}>
-          <EquipmentFilter selected={equipId ? equipment.find(e => e.id === equipId)?.name || 'all' : 'all'} onChange={(c) => {
+          <EquipmentFilter selected={(equipId ? equipment.find(e => e.id === equipId)?.name || 'all' : 'all') as EquipmentCategory} onChange={(c) => {
             const eq = equipment.find(e => e.name === c)
             setEquipId(eq?.id ?? null)
           }} />
@@ -407,7 +400,7 @@ export default function Procedures() {
             <span><strong>Test:</strong> {detail.name}</span>
             <span><strong>Equipment:</strong> {detail?.purpose || '—'}</span>
             <span><strong>Date:</strong> {run.completed_at ? new Date(run.completed_at).toLocaleString() : '—'}</span>
-            <span><strong>Operator:</strong> {run.operator || '—'}</span>
+            <span><strong>Operator:</strong> {user?.name || '—'}</span>
           </div>
         </header>
 

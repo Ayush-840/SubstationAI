@@ -98,7 +98,7 @@ export default function CatalogEditor() {
     if (!equipId) { setTests([]); return }
     const eq = equipment.find(e => e.id === equipId)
     if (!eq) return
-    api.get<any[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+    api.get<any>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
       .then(res => setTests(Array.isArray(res) ? res : res.data ?? []))
       .catch(() => {})
   }, [equipId])
@@ -162,13 +162,13 @@ export default function CatalogEditor() {
       if (isNew) {
         const res = await api.post<CatalogTest>('/api/catalog/tests', test)
         setTest(res)
-        setTestId(res.id)
+        setTestId(res.id ?? null)
         setIsNew(false)
         // Refresh list
         if (equipId) {
           const eq = equipment.find(e => e.id === equipId)
           if (eq) {
-            api.get<any[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+            api.get<any>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
               .then(res => setTests(Array.isArray(res) ? res : res.data ?? []))
               .catch(() => {})
           }
@@ -214,7 +214,7 @@ export default function CatalogEditor() {
           if (equipId) {
             const eq = equipment.find(e => e.id === equipId)
             if (eq) {
-              api.get<any[]>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
+              api.get<any>(`/api/catalog/tests?equipment=${encodeURIComponent(eq.name)}&page=1&page_size=100`)
                 .then(res => setTests(Array.isArray(res) ? res : res.data ?? []))
                 .catch(() => {})
             }

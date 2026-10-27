@@ -226,7 +226,7 @@ export default function Catalog() {
                             background: test.status === 'verified' ? 'var(--success)' : test.status === 'draft' ? 'var(--warn)' : 'var(--muted)',
                             flexShrink: 0,
                           }} />
-                          {test.status?.charAt(0).toUpperCase() + test.status?.slice(1) || '—'}
+                          {test.status ? test.status.charAt(0).toUpperCase() + test.status.slice(1) : '—'}
                         </span>
                       </td>
                     </tr>
@@ -255,7 +255,7 @@ export default function Catalog() {
                     <span><strong>Category:</strong> {test.category || '—'}</span>
                     <span><strong>Standard:</strong> <span style={{ fontFamily: 'var(--font-data)' }}>{test.standard_code || '—'}</span></span>
                     <span style={{ color: test.status === 'verified' ? 'var(--success)' : test.status === 'draft' ? 'var(--warn)' : 'var(--muted)' }}>
-                      <strong>Status:</strong> {test.status?.charAt(0).toUpperCase() + test.status?.slice(1) || '—'}
+                      <strong>Status:</strong> {test.status ? test.status.charAt(0).toUpperCase() + test.status.slice(1) : '—'}
                     </span>
                   </div>
                 </Link>

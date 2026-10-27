@@ -386,4 +386,26 @@ class AuthEvent(Base):
     user = relationship("User")
 
 
+class OneTimeToken(Base):
+    """Single-use token for e-mail verification and password reset
+    (AUTH_TRD §4). Only the SHA-256 of the raw token is stored, so a leaked
+    row cannot be replayed; ``used_at`` is set in the same transaction that
+    applies the change the token authorises (§6).
+    """
+
+    __tablename__ = "one_time_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    purpose = Column(String(32), nullable=False)  # verify_email | reset_password
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+
+
 Index("ix_chunks_embedding_id", "chunks.id")  # placeholder for vector index reference

@@ -1448,3 +1448,99 @@ def test_legacy_bcrypt_hash_upgraded_to_argon2id_on_login(client):
         "/api/auth/login", json={"email": email, "password": "wrong-pass1"}
     ).status_code == 401
 
+
+# --- AUTH_TRD Day 3: one-time token store + mail interface -------------------
+
+
+def test_one_time_token_stores_only_hash_and_is_single_use():
+    from app.core.tokens import consume_one_time_token, create_one_time_token
+    from app.db.models import OneTimeToken
+
+    db = SessionLocal()
+    try:
+        uid = int(db.query(User.id).filter(User.email == "u@test.dev").scalar())
+
+        raw = create_one_time_token(db, uid, "verify_email")
+        db.commit()
+        assert len(raw) >= 40  # 32 random bytes, URL-safe
+
+        row = (
+            db.query(OneTimeToken)
+            .filter(OneTimeToken.user_id == uid, OneTimeToken.purpose == "verify_email")
+            .order_by(OneTimeToken.id.desc())
+            .first()
+        )
+        assert len(row.token_hash) == 64  # SHA-256 hex only
+        assert raw not in row.token_hash  # raw value never persisted
+        assert row.used_at is None
+
+        # first consume wins and marks used_at in the caller's transaction
+        got = consume_one_time_token(db, raw, "verify_email")
+        assert got is not None and got.id == row.id
+        db.commit()
+
+        # second use of the same token is rejected
+        assert consume_one_time_token(db, raw, "verify_email") is None
+
+        # wrong purpose is rejected without consuming the fresh token
+        raw2 = create_one_time_token(db, uid, "verify_email")
+        db.commit()
+        assert consume_one_time_token(db, raw2, "reset_password") is None
+
+        # expired token is rejected
+        raw3 = create_one_time_token(db, uid, "verify_email")
+        db.commit()
+        r3 = (
+            db.query(OneTimeToken)
+            .filter(OneTimeToken.user_id == uid)
+            .order_by(OneTimeToken.id.desc())
+            .first()
+        )
+        r3.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        db.commit()
+        assert consume_one_time_token(db, raw3, "verify_email") is None
+
+        # garbage / empty input is rejected
+        assert consume_one_time_token(db, "no-such-token", "verify_email") is None
+        assert consume_one_time_token(db, None, "verify_email") is None
+    finally:
+        db.close()
+
+
+def test_create_one_time_token_rejects_unknown_purpose():
+    from app.core.tokens import create_one_time_token
+
+    db = SessionLocal()
+    try:
+        uid = int(db.query(User.id).filter(User.email == "u@test.dev").scalar())
+        with pytest.raises(ValueError, match="purpose"):
+            create_one_time_token(db, uid, "launch_missiles")
+    finally:
+        db.close()
+
+
+def test_console_mail_backend_prints_the_message(capsys):
+    from app.core.mail import send_mail
+
+    send_mail("user@example.com", "Verify your e-mail", "Click: http://x/#token=abc")
+    err = capsys.readouterr().err
+    assert "user@example.com" in err
+    assert "Verify your e-mail" in err
+    assert "token=abc" in err
+
+
+def test_unknown_mail_backend_raises(monkeypatch):
+    from app.core.mail import send_mail
+
+    monkeypatch.setattr(get_settings(), "MAIL_BACKEND", "carrier-pigeon")
+    with pytest.raises(RuntimeError, match="Unknown MAIL_BACKEND"):
+        send_mail("a@b.c", "subject", "body")
+
+
+def test_resend_backend_without_api_key_raises(monkeypatch):
+    from app.core.mail import send_mail
+
+    monkeypatch.setattr(get_settings(), "MAIL_BACKEND", "resend")
+    monkeypatch.setattr(get_settings(), "RESEND_API_KEY", "")
+    with pytest.raises(RuntimeError, match="RESEND_API_KEY"):
+        send_mail("a@b.c", "subject", "body")

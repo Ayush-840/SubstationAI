@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Mail (AUTH_TRD Day 3): console = print to stderr (dev/test),
+    # smtp = SMTP_HOST/..., resend = Resend HTTP API (best on Render free tier).
+    MAIL_BACKEND: str = "console"
+    MAIL_FROM: str = "no-reply@substationiq.local"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_STARTTLS: bool = True
+    RESEND_API_KEY: str = ""
+    # Public origin of this API (used when an absolute link must point here).
+    APP_BASE_URL: str = "http://localhost:8000"
+
     # Logging
     LOG_LEVEL: str = "INFO"
 

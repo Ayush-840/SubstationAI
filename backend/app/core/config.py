@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # Public origin of this API (used when an absolute link must point here).
     APP_BASE_URL: str = "http://localhost:8000"
 
+    # E-mail verification gate (AUTH_TRD Day 4). false in dev so local
+    # accounts work without a mail server; production with verification on
+    # must also configure a real MAIL_BACKEND (assert_production_ready).
+    REQUIRE_EMAIL_VERIFICATION: bool = False
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
@@ -119,6 +124,10 @@ class Settings(BaseSettings):
             problems.append("CORS_ALLOW_ORIGINS is empty (the browser frontend would be blocked)")
         if self.SEED_DEMO_USERS:
             problems.append("SEED_DEMO_USERS must be false in production")
+        if self.REQUIRE_EMAIL_VERIFICATION and self.MAIL_BACKEND == "console":
+            problems.append(
+                "REQUIRE_EMAIL_VERIFICATION needs a real MAIL_BACKEND (smtp/resend), not console"
+            )
         if problems:
             raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
 

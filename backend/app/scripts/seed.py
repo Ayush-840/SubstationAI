@@ -1,6 +1,7 @@
 """Seed the database: demo users, standards, catalog from data/catalog/*.yaml,
 synonyms, sample documents and safety precautions."""
 
+from datetime import datetime
 from pathlib import Path
 import sys
 
@@ -20,7 +21,7 @@ from app.catalog.loader import (
     validate_catalog,
 )  # noqa: E402
 from app.db.models import User, UserRole  # noqa: E402
-from app.db.migrate import migrate_user_roles  # noqa: E402
+from app.db.migrate import migrate_auth_columns, migrate_user_roles  # noqa: E402
 
 # Demo users for local development and classroom demos. They are created only
 # when SEED_DEMO_USERS=true (see core/config.py). The defaults below are public
@@ -46,6 +47,9 @@ def ensure_demo_users(db) -> None:
                     email=email,
                     password_hash=get_password_hash(password),
                     role=role,
+                    # §10: demo accounts bypass e-mail verification (dev only;
+                    # production refuses SEED_DEMO_USERS).
+                    email_verified_at=datetime.utcnow(),
                 )
             )
     db.commit()
@@ -54,6 +58,7 @@ def ensure_demo_users(db) -> None:
 def seed() -> None:
     Base.metadata.create_all(bind=engine)
     migrate_user_roles(engine)
+    migrate_auth_columns(engine)
     db = SessionLocal()
     try:
         if get_settings().SEED_DEMO_USERS:

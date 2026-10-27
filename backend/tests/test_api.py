@@ -40,12 +40,16 @@ def setup_db():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        # Seeded accounts are pre-verified (§10: demo/dev accounts bypass
+        # e-mail verification); A-02 uses a freshly registered account.
+        verified = datetime.utcnow()
         db.add(
             User(
                 name="Test User",
                 email="u@test.dev",
                 password_hash=get_password_hash("pass1234"),
                 role=UserRole.TRAINEE,
+                email_verified_at=verified,
             )
         )
         db.add(
@@ -54,6 +58,7 @@ def setup_db():
                 email="a@test.dev",
                 password_hash=get_password_hash("pass1234"),
                 role=UserRole.ADMIN,
+                email_verified_at=verified,
             )
         )
         db.add(
@@ -62,6 +67,7 @@ def setup_db():
                 email="e@test.dev",
                 password_hash=get_password_hash("pass1234"),
                 role=UserRole.ENGINEER,
+                email_verified_at=verified,
             )
         )
         db.commit()
@@ -1276,7 +1282,7 @@ def _events(event: str, user_id: int | None = None, email: str | None = None) ->
 def _uid(email: str) -> int:
     db = SessionLocal()
     try:
-        return int(db.query(User.id).filter(User.email == email).one())
+        return int(db.query(User.id).filter(User.email == email).scalar())
     finally:
         db.close()
 
@@ -1544,3 +1550,136 @@ def test_resend_backend_without_api_key_raises(monkeypatch):
     monkeypatch.setattr(get_settings(), "RESEND_API_KEY", "")
     with pytest.raises(RuntimeError, match="RESEND_API_KEY"):
         send_mail("a@b.c", "subject", "body")
+
+# --- AUTH_TRD Day 4: e-mail verification (A-02, A-03) ------------------------
+
+
+def _extract_verify_token(capsys) -> str:
+    """Pull the raw token from the console-backend mail a register just sent."""
+    import re
+
+    mails = capsys.readouterr().err
+    found = re.findall(r"#token=([A-Za-z0-9_-]+)", mails)
+    assert found, f"no verification link in console mail: {mails!r}"
+    return found[-1]  # the most recent register wins
+
+
+def test_a02_unverified_login_rejected_until_email_verified(client, monkeypatch, capsys):
+    monkeypatch.setattr(get_settings(), "REQUIRE_EMAIL_VERIFICATION", True)
+    email = "a02-unverified@test.dev"
+    _register_uid(client, email)
+    token = _extract_verify_token(capsys)
+
+    denied = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "email_not_verified"
+    # a wrong password still answers the generic 401 (no verification hint)
+    wrong = client.post("/api/auth/login", json={"email": email, "password": "wrong-pass1"})
+    assert wrong.status_code == 401
+
+    assert client.post("/api/auth/verify-email", json={"token": token}).status_code == 200
+    allowed = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert allowed.status_code == 200
+    # the successful verification is audited exactly once (A-13)
+    assert len(_events("email_verified", user_id=_uid(email))) == 1
+
+
+def test_a03_verify_token_is_single_use_and_expiry_is_uniform_400(client, monkeypatch, capsys):
+    from app.core.tokens import create_one_time_token
+    from app.db.models import OneTimeToken
+
+    monkeypatch.setattr(get_settings(), "REQUIRE_EMAIL_VERIFICATION", True)
+    email = "a03-verify@test.dev"
+    uid = _register_uid(client, email)
+    token = _extract_verify_token(capsys)
+
+    first = client.post("/api/auth/verify-email", json={"token": token})
+    assert first.status_code == 200
+    # second use of the same token → 400, same body as any other failure
+    second = client.post("/api/auth/verify-email", json={"token": token})
+    assert second.status_code == 400
+    assert second.json()["detail"] == "Invalid or expired token"
+
+    # an expired token → identical uniform 400
+    db = SessionLocal()
+    try:
+        raw = create_one_time_token(db, uid, "verify_email")
+        db.commit()
+        row = (
+            db.query(OneTimeToken)
+            .filter(OneTimeToken.user_id == uid)
+            .order_by(OneTimeToken.id.desc())
+            .first()
+        )
+        row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        db.commit()
+    finally:
+        db.close()
+    expired = client.post("/api/auth/verify-email", json={"token": raw})
+    assert expired.status_code == 400
+    assert expired.json() == second.json()
+
+    # garbage token → same body again (never reveals why)
+    garbage = client.post("/api/auth/verify-email", json={"token": "not-a-token"})
+    assert garbage.status_code == 400
+    assert garbage.json() == second.json()
+
+
+def test_resend_verification_is_identical_202_for_unknown_and_known(client):
+    unknown = client.post(
+        "/api/auth/resend-verification", json={"email": "ghost-a04@test.dev"}
+    )
+    known = client.post(
+        "/api/auth/resend-verification", json={"email": "u@test.dev"}  # verified
+    )
+    assert unknown.status_code == known.status_code == 202
+    assert unknown.json() == known.json()
+
+
+def test_resend_verification_capped_at_three_mails_per_hour(client, capsys):
+    from app.db.models import OneTimeToken
+
+    email = "resend-cap@test.dev"
+    uid = _register_uid(client, email)
+    capsys.readouterr()  # drop the register mail
+
+    def _mail_tokens() -> int:
+        db = SessionLocal()
+        try:
+            return (
+                db.query(OneTimeToken.id)
+                .filter(
+                    OneTimeToken.user_id == uid,
+                    OneTimeToken.purpose == "verify_email",
+                )
+                .count()
+            )
+        finally:
+            db.close()
+
+    # register already sent 1; only 2 more fit inside the 3/hour window
+    for _ in range(3):
+        assert client.post(
+            "/api/auth/resend-verification", json={"email": email}
+        ).status_code == 202
+    assert _mail_tokens() == 3  # register + 2 resends; 3rd resend silently dropped
+
+    assert client.post(
+        "/api/auth/resend-verification", json={"email": email}
+    ).status_code == 202
+    assert _mail_tokens() == 3  # still capped, still 202
+
+
+def test_production_refuses_console_mail_when_verification_required():
+    s = Settings(
+        APP_ENV="production",
+        JWT_SECRET="x" * 40,
+        CORS_ALLOW_ORIGINS="https://example.vercel.app",
+        REQUIRE_EMAIL_VERIFICATION=True,
+        MAIL_BACKEND="console",
+    )
+    with pytest.raises(RuntimeError, match="MAIL_BACKEND"):
+        s.assert_production_ready()
+    # a real backend passes
+    s.MAIL_BACKEND = "resend"
+    s.assert_production_ready()

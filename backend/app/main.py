@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.core.config import get_settings
 from app.db.session import engine, Base
-from app.db.migrate import migrate_user_roles
+from app.db.migrate import migrate_auth_columns, migrate_user_roles
 from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback
 from app.api.v1 import api_router
 from app.db.mongo import get_mongo, close_mongo, ensure_indexes
@@ -48,6 +48,7 @@ LEGACY_ROUTERS = (
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     migrate_user_roles(engine)
+    migrate_auth_columns(engine)
     # One fast probe (1.5 s) at startup; get_mongo() returns None and backs off
     # while MongoDB is down so SQLite-backed requests are never stalled.
     mongo_db = await get_mongo()

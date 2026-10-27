@@ -11,6 +11,8 @@ Behaviour is specified in AUTH_TRD.md; the short version:
 * logout works even when the access token has already expired.
 """
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +22,7 @@ from app.core.audit import log_event
 from app.core.config import get_settings
 from app.core.denylist import revoke as revoke_jti
 from app.core.login_throttle import record_failure, record_success, retry_after
+from app.core.mail import send_mail
 from app.core.refresh import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -43,15 +46,18 @@ from app.core.security import (
     verify_password,
 )
 from app.core.security_middleware import get_limiter
-from app.db.models import User, UserRole
+from app.core.tokens import consume_one_time_token, create_one_time_token
+from app.db.models import OneTimeToken, User, UserRole
 from app.db.session import get_db
 from app.schemas import (
     LogoutRequest,
     RefreshRequest,
+    ResendVerificationIn,
     Token,
     UserCreate,
     UserLogin,
     UserResponse,
+    VerifyEmailIn,
 )
 
 settings = get_settings()
@@ -60,6 +66,9 @@ limiter = get_limiter()
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _dummy_hash: str | None = None
+
+# §6: verification mails per e-mail per hour — excess silently dropped (202).
+_RESEND_PER_HOUR = 3
 
 
 def _burn_hash_time(password: str) -> None:
@@ -81,6 +90,27 @@ def _token_response(user: User, refresh_raw: str) -> dict:
         "token_type": "bearer",
         "refresh_token": refresh_raw,
     }
+
+
+def _send_verification_mail(user: User, raw_token: str) -> None:
+    """Send the confirmation link. The token rides in the URL *fragment* so it
+    never appears in server/proxy logs (§7.6). A transport failure is logged
+    and swallowed: registration must not depend on a third party (§6)."""
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email#token={raw_token}"
+    body = (
+        f"Hi {user.name},\n\n"
+        "Confirm your e-mail address for SubstationIQ:\n\n"
+        f"{link}\n\n"
+        "If you did not create this account you can ignore this message.\n"
+    )
+    try:
+        send_mail(user.email, "Confirm your SubstationIQ e-mail", body)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "verification mail failed for user_id=%s", user.id
+        )
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
@@ -105,6 +135,9 @@ def register(request: Request, user_data: UserCreate, db: Session = Depends(get_
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     db.refresh(user)
     log_event(db, "register", user_id=user.id, request=request, detail={"email": user.email})
+    raw_token = create_one_time_token(db, user.id, "verify_email")
+    db.commit()  # user + verify token in one transaction
+    _send_verification_mail(user, raw_token)
     return user
 
 
@@ -157,6 +190,12 @@ def login(
         user.password_hash = get_password_hash(credentials.password)
         db.commit()
 
+    if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
+        # A-02: credentials are correct but the address was never confirmed
+        # (§5.2). No login_fail is recorded — the password was right, so this
+        # must not count towards the lockout.
+        raise HTTPException(status_code=403, detail="email_not_verified")
+
     record_success(ip, credentials.email)
     refresh_raw = issue_refresh_token(db, user.id)
     set_auth_cookies(response, refresh_raw)
@@ -191,6 +230,9 @@ def refresh(
     user = db.query(User).filter(User.id == row.user_id).first()
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
+    if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
+        # §6: a refresh token cannot resurrect an unverified session.
+        raise HTTPException(status_code=401, detail="Email not verified")
 
     refresh_raw = rotate_refresh_token(db, row)
     set_auth_cookies(response, refresh_raw)
@@ -252,3 +294,60 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/verify-email")
+def verify_email(
+    payload: VerifyEmailIn, request: Request, db: Session = Depends(get_db)
+):
+    """Confirm the address: consume the single-use token and stamp
+    ``email_verified_at``. Token used twice / expired / unknown → uniform 400
+    (A-03), so the response never says why a token was rejected."""
+    row = consume_one_time_token(db, payload.token, "verify_email")
+    if row is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    user = db.query(User).filter(User.id == row.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    if user.email_verified_at is None:
+        user.email_verified_at = datetime.utcnow()
+    # used_at (flushed by consume) + verified_at commit together (§6).
+    db.commit()
+    log_event(db, "email_verified", user_id=user.id, request=request)
+    return {"ok": True, "email": user.email}
+
+
+@router.post("/resend-verification", status_code=202)
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def resend_verification(
+    payload: ResendVerificationIn,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Always 202 with an identical body for unknown, verified and throttled
+    addresses — the response must not reveal who has an account (§6).
+    Max 3 verification mails per e-mail per hour; excess is silently dropped."""
+    response_body = {
+        "detail": "If that address can receive e-mail, a verification link has been sent"
+    }
+    user = (
+        db.query(User).filter(func.lower(User.email) == payload.email).first()
+    )
+    if user is None or user.email_verified_at is not None:
+        return response_body
+
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    sent = (
+        db.query(OneTimeToken.id)
+        .filter(
+            OneTimeToken.user_id == user.id,
+            OneTimeToken.purpose == "verify_email",
+            OneTimeToken.created_at >= cutoff,
+        )
+        .count()
+    )
+    if sent < _RESEND_PER_HOUR:
+        raw_token = create_one_time_token(db, user.id, "verify_email")
+        db.commit()
+        _send_verification_mail(user, raw_token)
+    return response_body

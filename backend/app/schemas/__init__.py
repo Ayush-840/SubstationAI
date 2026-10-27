@@ -102,9 +102,29 @@ class UserResponse(BaseModel):
     email: str
     role: UserRole
     created_at: datetime
+    # NULL until the verification link is clicked; lets the SPA show the
+    # "check your e-mail" state and the account page show verification status.
+    email_verified_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class VerifyEmailIn(BaseModel):
+    """POST /api/auth/verify-email — token comes from the e-mail link."""
+
+    token: str = Field(min_length=1, max_length=200)
+
+
+class ResendVerificationIn(BaseModel):
+    """POST /api/auth/resend-verification — always answered 202."""
+
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def _lower_email(cls, v: str) -> str:
+        return _norm_email(v)
 
 
 class EquipmentClassResponse(BaseModel):

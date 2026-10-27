@@ -6,7 +6,7 @@ exists. Every function here is idempotent so it can run on each startup
 against both a legacy database and a freshly seeded one.
 """
 
-from sqlalchemy import text
+from sqlalchemy import DateTime, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateIndex, CreateTable
 
@@ -79,3 +79,27 @@ def migrate_user_roles(engine: Engine) -> None:
                 "UPDATE users SET role = 'TRAINEE' WHERE role IN ('USER', 'user')"
             )
         )
+
+
+def migrate_auth_columns(engine: Engine) -> None:
+    """Idempotent ALTERs for AUTH_TRD §4 user columns (added per build day).
+
+    ``Base.metadata.create_all`` creates missing *tables* but never alters an
+    existing one, so a deployment that predates Day 4 needs this at boot.
+    New columns are nullable with no default, which is safe for both SQLite
+    (``ADD COLUMN`` restrictions) and Postgres.
+    """
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        if "users" not in inspector.get_table_names():
+            return  # table not created yet — create_all has not run
+        existing = {c["name"] for c in inspector.get_columns("users")}
+        # SQLite spells it DATETIME, Postgres TIMESTAMP — compile the type
+        # through SQLAlchemy so the dialect decides.
+        dt_type = str(DateTime().compile(dialect=engine.dialect))
+        if "email_verified_at" not in existing:
+            conn.execute(
+                text(f"ALTER TABLE users ADD COLUMN email_verified_at {dt_type}")
+            )

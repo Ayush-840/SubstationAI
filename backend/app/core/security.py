@@ -99,6 +99,9 @@ async def get_current_user(
     user = db.query(User).filter(User.id == int(user_id)).first()
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
+    if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
+        # §6: unverified accounts hold no valid session, whatever a token says.
+        raise HTTPException(status_code=401, detail="Email not verified")
     return user
 
 

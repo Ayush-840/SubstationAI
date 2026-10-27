@@ -45,6 +45,9 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole), default=UserRole.TRAINEE, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # AUTH_TRD §4 / Day 4: NULL until the e-mail link is clicked. The login
+    # gate (REQUIRE_EMAIL_VERIFICATION) rejects NULL at login/refresh/me.
+    email_verified_at = Column(DateTime, nullable=True)
 
     conversations = relationship("Conversation", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")

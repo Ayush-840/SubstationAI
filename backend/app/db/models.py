@@ -355,7 +355,9 @@ class RefreshToken(Base):
 
     Only the SHA-256 of the opaque token is kept, so a leaked row cannot be
     replayed; rotation is recorded through ``used_at`` and logout through
-    ``revoked_at``.
+    ``revoked_at``. All rotations of one login share a ``family_id`` (one
+    browser device), which powers the sessions list and per-device revoke
+    (AUTH_TRD Day 6).
     """
 
     __tablename__ = "refresh_tokens"
@@ -363,9 +365,13 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    family_id = Column(String(32), index=True, nullable=True)  # 32 hex chars
+    user_agent = Column(String(200), nullable=True)
+    ip = Column(String(45), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
 
     user = relationship("User")

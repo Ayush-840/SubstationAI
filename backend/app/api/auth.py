@@ -48,7 +48,7 @@ from app.core.security import (
 )
 from app.core.security_middleware import get_limiter
 from app.core.tokens import consume_one_time_token, create_one_time_token
-from app.db.models import OneTimeToken, User, UserRole
+from app.db.models import OneTimeToken, RefreshToken, User, UserRole
 from app.db.session import get_db
 from app.schemas import (
     ForgotPasswordIn,
@@ -223,7 +223,11 @@ def login(
         raise HTTPException(status_code=403, detail="email_not_verified")
 
     record_success(ip, credentials.email)
-    refresh_raw = issue_refresh_token(db, user.id)
+    refresh_raw = issue_refresh_token(
+        db, user.id,
+        user_agent=request.headers.get("user-agent"),
+        ip=ip,
+    )
     set_auth_cookies(response, refresh_raw)
     log_event(db, "login_ok", user_id=user.id, request=request)
     return _token_response(user, refresh_raw)
@@ -473,4 +477,126 @@ def change_password(
         db, "password_change", user_id=current_user.id, request=request,
         detail={"revoked_refresh_tokens": revoked, "kept_current_session": keep is not None},
     )
+    return {"ok": True, "revoked_refresh_tokens": revoked}
+
+
+@router.get("/sessions")
+def list_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    x_refresh_token: str | None = Header(None, alias="X-Refresh-Token"),
+):
+    """One entry per refresh family (one browser device): UA, IP, when the
+    session started and when it was last active. The caller may pass its own
+    refresh token in ``X-Refresh-Token`` (never a query string, §7.6) so the
+    matching entry is flagged ``current``."""
+    rows = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > datetime.utcnow(),
+        )
+        .order_by(RefreshToken.id)
+        .all()
+    )
+    current_hash = hash_token(x_refresh_token) if x_refresh_token else None
+
+    families: dict[str, dict] = {}
+    for tok in rows:
+        # A legacy row without a family still shows up as its own session.
+        key = tok.family_id or f"tok:{tok.id}"
+        active = tok.used_at is None
+        entry = families.get(key)
+        if entry is None:
+            entry = families[key] = {
+                "family_id": tok.family_id or str(tok.id),
+                "user_agent": tok.user_agent,
+                "ip": tok.ip,
+                "created_at": tok.created_at,
+                "last_used_at": tok.created_at,
+                "active": False,
+                "current": False,
+            }
+        activity = tok.last_used_at or tok.created_at
+        if activity and activity > entry["last_used_at"]:
+            entry["last_used_at"] = activity
+        if tok.created_at and tok.created_at < entry["created_at"]:
+            entry["created_at"] = tok.created_at
+        if tok.user_agent and not entry["user_agent"]:
+            entry["user_agent"] = tok.user_agent
+        if tok.ip and not entry["ip"]:
+            entry["ip"] = tok.ip
+        if active:
+            entry["active"] = True
+        if current_hash and tok.token_hash == current_hash:
+            entry["current"] = True
+
+    # Only living sessions are interesting; newest activity first.
+    sessions = sorted(
+        (e for e in families.values() if e["active"]),
+        key=lambda e: e["last_used_at"] or e["created_at"],
+        reverse=True,
+    )
+    return {"sessions": sessions}
+
+
+@router.delete("/sessions/{family_id}")
+def revoke_session(
+    family_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Revoke one device's session (every token of the family). Another
+    user's family id is indistinguishable from a missing one (404)."""
+    count = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .update(
+            {RefreshToken.revoked_at: datetime.utcnow()},
+            synchronize_session=False,
+        )
+    )
+    if count == 0:
+        exists = (
+            db.query(RefreshToken.id)
+            .filter(
+                RefreshToken.user_id == current_user.id,
+                RefreshToken.family_id == family_id,
+            )
+            .first()
+        )
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+    db.commit()
+    return {"ok": True, "revoked_refresh_tokens": int(count)}
+
+
+@router.post("/logout-all")
+async def logout_all(
+    response: Response,
+    db: Session = Depends(get_db),
+    raw_token: str | None = Depends(oauth2_scheme_optional),
+):
+    """Revoke every session of the user and deny-list this access token."""
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(raw_token, verify_exp=False)
+    user_id = payload.get("sub")
+    jti, exp = payload.get("jti"), payload.get("exp")
+    if jti:
+        await revoke_jti(jti, float(exp) if exp is not None else None)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    revoked = revoke_all_for_user(db, int(user_id))
+    log_event(
+        db, "logout_all", user_id=int(user_id),
+        detail={"revoked_refresh_tokens": revoked},
+    )
+    clear_auth_cookies(response)
     return {"ok": True, "revoked_refresh_tokens": revoked}

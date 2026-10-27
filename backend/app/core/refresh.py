@@ -17,6 +17,7 @@ request that presents the *cookie* must echo the CSRF cookie in
 import hashlib
 import secrets
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 from fastapi import HTTPException, Response
 from sqlalchemy.orm import Session
@@ -40,11 +41,29 @@ def _expires_at() -> datetime:
     return datetime.utcnow() + timedelta(days=settings.REFRESH_EXPIRE_DAYS)
 
 
-def issue_refresh_token(db: Session, user_id: int) -> str:
-    """Store a new hashed token and return the raw value to hand out."""
+def issue_refresh_token(
+    db: Session,
+    user_id: int,
+    *,
+    family_id: str | None = None,
+    user_agent: str | None = None,
+    ip: str | None = None,
+) -> str:
+    """Store a new hashed token and return the raw value to hand out.
+
+    ``family_id`` groups every rotation of one login (one device); a login
+    starts a fresh family, a rotation passes the existing one along.
+    """
     raw = secrets.token_urlsafe(48)
     db.add(
-        RefreshToken(user_id=user_id, token_hash=hash_token(raw), expires_at=_expires_at())
+        RefreshToken(
+            user_id=user_id,
+            token_hash=hash_token(raw),
+            family_id=family_id or uuid4().hex,
+            user_agent=(user_agent or "")[:200] or None,
+            ip=ip,
+            expires_at=_expires_at(),
+        )
     )
     db.commit()
     return raw
@@ -84,12 +103,24 @@ def find_valid_token(db: Session, raw: str) -> RefreshToken:
 
 
 def rotate_refresh_token(db: Session, row: RefreshToken) -> str:
-    """Consume ``row`` and insert its successor in one commit."""
-    row.used_at = datetime.utcnow()
+    """Consume ``row`` and insert its successor in one commit.
+
+    The successor inherits the family and device info, so a session keeps
+    one identity across every rotation; the old row records when it was
+    last used (AUTH_TRD Day 6).
+    """
+    now = datetime.utcnow()
+    row.used_at = now
+    row.last_used_at = now
     raw = secrets.token_urlsafe(48)
     db.add(
         RefreshToken(
-            user_id=row.user_id, token_hash=hash_token(raw), expires_at=_expires_at()
+            user_id=row.user_id,
+            token_hash=hash_token(raw),
+            family_id=row.family_id,
+            user_agent=row.user_agent,
+            ip=row.ip,
+            expires_at=_expires_at(),
         )
     )
     db.commit()

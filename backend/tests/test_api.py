@@ -1822,3 +1822,146 @@ def test_a09_change_password_keeps_current_session_revokes_others(client):
         "/api/auth/login", json={"email": email, "password": "NewPass1234"}
     ).status_code == 200
     assert len(_events("password_change", user_id=uid)) == 1
+
+# --- AUTH_TRD Day 6: refresh families, sessions, logout-all (A-14) -----------
+
+
+def _family_of(raw_refresh: str) -> str:
+    from app.core.refresh import hash_token
+
+    db = SessionLocal()
+    try:
+        return str(
+            db.query(RefreshToken.family_id)
+            .filter(RefreshToken.token_hash == hash_token(raw_refresh))
+            .scalar()
+        )
+    finally:
+        db.close()
+
+
+def test_rotation_keeps_family_and_captures_device_info(client):
+    from app.core.refresh import hash_token
+
+    email = "family-rotation@test.dev"
+    _register_uid(client, email)
+    t = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+
+    db = SessionLocal()
+    try:
+        row1 = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_token(t["refresh_token"]))
+            .one()
+        )
+        family = row1.family_id
+        assert family and len(family) == 32
+        assert row1.user_agent  # captured from the login request
+        assert row1.ip
+        assert row1.last_used_at is None
+    finally:
+        db.close()
+
+    rr = client.post("/api/auth/refresh", json={"refresh_token": t["refresh_token"]})
+    assert rr.status_code == 200
+
+    db = SessionLocal()
+    try:
+        row1 = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_token(t["refresh_token"]))
+            .one()
+        )
+        row2 = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_token(rr.json()["refresh_token"]))
+            .one()
+        )
+        assert row2.family_id == family  # rotation inherits the family
+        assert row2.user_agent == row1.user_agent
+        assert row2.ip == row1.ip
+        assert row1.used_at is not None and row1.last_used_at is not None
+    finally:
+        db.close()
+
+
+def test_sessions_list_marks_current_and_revoke_kills_one_device(client):
+    email = "sessions-user@test.dev"
+    _register_uid(client, email)
+    s1 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+    s2 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+    auth1 = {"Authorization": f"Bearer {s1['access_token']}"}
+
+    r = client.get("/api/auth/sessions", headers={
+        **auth1, "X-Refresh-Token": s1["refresh_token"],
+    })
+    assert r.status_code == 200
+    sessions = r.json()["sessions"]
+    assert len(sessions) == 2
+    assert all(s["user_agent"] for s in sessions)
+    assert all(s["ip"] for s in sessions)
+    currents = [s for s in sessions if s["current"]]
+    assert len(currents) == 1
+
+    # revoke the OTHER device by its family id
+    other_fam = _family_of(s2["refresh_token"])
+    assert other_fam != _family_of(s1["refresh_token"])
+    d = client.delete(f"/api/auth/sessions/{other_fam}", headers=auth1)
+    assert d.status_code == 200
+
+    # that device is dead; the caller's session still refreshes
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s2["refresh_token"]}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s1["refresh_token"]}
+    ).status_code == 200
+
+    # an unknown family id (or another user's) is a plain 404
+    assert client.delete(
+        f"/api/auth/sessions/{'f' * 32}", headers=auth1
+    ).status_code == 404
+
+
+def test_a14_concurrent_refresh_race_does_not_wipe_the_session(client):
+    email = "a14-race@test.dev"
+    _register_uid(client, email)
+    t = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+
+    first = client.post("/api/auth/refresh", json={"refresh_token": t["refresh_token"]})
+    assert first.status_code == 200
+    # second tab presents the same, just-rotated token inside the grace
+    # window → the race answer, NOT a session wipe (A-14)
+    second = client.post("/api/auth/refresh", json={"refresh_token": t["refresh_token"]})
+    assert second.status_code == 401
+    assert "already used" in second.json()["detail"]
+    # the successor from the winning refresh still works
+    third = client.post(
+        "/api/auth/refresh", json={"refresh_token": first.json()["refresh_token"]}
+    )
+    assert third.status_code == 200
+
+
+def test_logout_all_revokes_every_session(client):
+    email = "logout-all@test.dev"
+    uid = _register_uid(client, email)
+    s1 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+    s2 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+
+    r = client.post(
+        "/api/auth/logout-all",
+        headers={"Authorization": f"Bearer {s1['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["revoked_refresh_tokens"] >= 2
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s1["refresh_token"]}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s2["refresh_token"]}
+    ).status_code == 401
+    # the access token used to call it is deny-listed as well
+    assert client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {s1['access_token']}"}
+    ).status_code == 401
+    assert len(_events("logout_all", user_id=uid)) == 1

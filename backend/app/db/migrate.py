@@ -107,3 +107,30 @@ def migrate_auth_columns(engine: Engine) -> None:
             conn.execute(
                 text(f"ALTER TABLE users ADD COLUMN password_changed_at {dt_type}")
             )
+
+        # Day 6: device tracking on refresh_tokens.
+        if "refresh_tokens" in inspector.get_table_names():
+            rt_cols = {c["name"] for c in inspector.get_columns("refresh_tokens")}
+            for col, ddl in (
+                ("family_id", "VARCHAR(32)"),
+                ("user_agent", "VARCHAR(200)"),
+                ("ip", "VARCHAR(45)"),
+                ("last_used_at", dt_type),
+            ):
+                if col not in rt_cols:
+                    conn.execute(
+                        text(f"ALTER TABLE refresh_tokens ADD COLUMN {col} {ddl}")
+                    )
+            # Legacy rows predate families: give each one its own pseudo-
+            # family (zero-padded id fits CHAR(32) and is unique) so the
+            # sessions list and per-device revoke cover them too.
+            orphans = conn.execute(
+                text("SELECT id FROM refresh_tokens WHERE family_id IS NULL")
+            ).fetchall()
+            for (rid,) in orphans:
+                conn.execute(
+                    text(
+                        "UPDATE refresh_tokens SET family_id = :fid WHERE id = :rid"
+                    ),
+                    {"fid": f"{rid:032d}", "rid": rid},
+                )

@@ -29,6 +29,7 @@ from app.core.refresh import (
     REFRESH_COOKIE,
     clear_auth_cookies,
     find_valid_token,
+    hash_token,
     issue_refresh_token,
     require_csrf_for_cookie_flow,
     revoke_all_for_user,
@@ -50,7 +51,10 @@ from app.core.tokens import consume_one_time_token, create_one_time_token
 from app.db.models import OneTimeToken, User, UserRole
 from app.db.session import get_db
 from app.schemas import (
+    ForgotPasswordIn,
     LogoutRequest,
+    PasswordChangeIn,
+    PasswordResetIn,
     RefreshRequest,
     ResendVerificationIn,
     Token,
@@ -110,6 +114,28 @@ def _send_verification_mail(user: User, raw_token: str) -> None:
 
         logging.getLogger(__name__).exception(
             "verification mail failed for user_id=%s", user.id
+        )
+
+
+def _send_reset_mail(user: User, raw_token: str) -> None:
+    """Reset link with the token in the fragment (§7.6); failures logged,
+    never raised (§6 fail-open — an unreachable mail provider must not break
+    the endpoint, the rate cap still applies on retry)."""
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password#token={raw_token}"
+    body = (
+        f"Hi {user.name},\n\n"
+        "Reset your SubstationIQ password (valid for 30 minutes):\n\n"
+        f"{link}\n\n"
+        "If you did not request this, you can ignore this message — your "
+        "password has not changed.\n"
+    )
+    try:
+        send_mail(user.email, "Reset your SubstationIQ password", body)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "reset mail failed for user_id=%s", user.id
         )
 
 
@@ -351,3 +377,100 @@ def resend_verification(
         db.commit()
         _send_verification_mail(user, raw_token)
     return response_body
+
+
+@router.post("/password/forgot", status_code=202)
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def forgot_password(
+    payload: ForgotPasswordIn,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Always 202 with an identical body for unknown and known addresses
+    (A-04, §6 no enumeration). Max 3 reset mails per e-mail per hour;
+    excess is silently dropped, still 202."""
+    response_body = {
+        "detail": "If that address has an account, a reset link has been sent"
+    }
+    user = (
+        db.query(User).filter(func.lower(User.email) == payload.email).first()
+    )
+    log_event(
+        db, "password_reset_request",
+        user_id=user.id if user is not None else None,
+        request=request, detail={"email": payload.email},
+    )
+    if user is None:
+        return response_body
+
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    sent = (
+        db.query(OneTimeToken.id)
+        .filter(
+            OneTimeToken.user_id == user.id,
+            OneTimeToken.purpose == "reset_password",
+            OneTimeToken.created_at >= cutoff,
+        )
+        .count()
+    )
+    if sent < _RESEND_PER_HOUR:
+        raw_token = create_one_time_token(db, user.id, "reset_password")
+        db.commit()
+        _send_reset_mail(user, raw_token)
+    return response_body
+
+
+@router.post("/password/reset")
+def reset_password(
+    payload: PasswordResetIn,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Consume the single-use 30-min token, set the new hash and revoke
+    EVERY session of the user in one transaction (A-05, §6). Invalid,
+    expired or reused tokens → uniform 400."""
+    row = consume_one_time_token(db, payload.token, "reset_password")
+    if row is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    user = db.query(User).filter(User.id == row.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    user.password_hash = get_password_hash(payload.new_password)
+    user.password_changed_at = datetime.utcnow()
+    # commit=False: used_at (flushed by consume) + hash + revokes land together
+    revoked = revoke_all_for_user(db, user.id, commit=False)
+    db.commit()
+    log_event(
+        db, "password_reset_done", user_id=user.id, request=request,
+        detail={"revoked_refresh_tokens": revoked},
+    )
+    return {"ok": True, "revoked_refresh_tokens": revoked}
+
+
+@router.post("/password/change")
+def change_password(
+    payload: PasswordChangeIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-authenticate with the current password, then swap it. Every other
+    session is revoked; the caller's own session (identified by its refresh
+    token) survives (A-09)."""
+    if not verify_password(payload.current_password, current_user.password_hash):
+        record_failure(_client_ip(request), current_user.email)
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    current_user.password_hash = get_password_hash(payload.new_password)
+    current_user.password_changed_at = datetime.utcnow()
+    keep = hash_token(payload.refresh_token) if payload.refresh_token else None
+    revoked = revoke_all_for_user(
+        db, current_user.id, keep_token_hash=keep, commit=False
+    )
+    db.commit()
+    log_event(
+        db, "password_change", user_id=current_user.id, request=request,
+        detail={"revoked_refresh_tokens": revoked, "kept_current_session": keep is not None},
+    )
+    return {"ok": True, "revoked_refresh_tokens": revoked}

@@ -48,6 +48,23 @@ def _norm_email(value: str) -> str:
     return value.strip().lower()
 
 
+def check_password_policy(v: str) -> str:
+    """Shared password rules for register, reset and change (AUTH_TRD §6).
+
+    The 72-byte cap stays while any bcrypt row can still exist; it can be
+    lifted once every stored hash is argon2id.
+    """
+    if len(v.encode("utf-8")) > 72:
+        raise ValueError("Password must be at most 72 bytes long")
+    if not v.strip():
+        raise ValueError("Password must not be blank")
+    if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
+        raise ValueError("Password must contain at least one letter and one digit")
+    if v.lower() in COMMON_PASSWORDS:
+        raise ValueError("That password is too common; choose another")
+    return v
+
+
 class UserCreate(BaseModel):
     """Registration input. Every rule here is also enforced by the tests."""
 
@@ -73,15 +90,7 @@ class UserCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def _password_policy(cls, v: str) -> str:
-        if len(v.encode("utf-8")) > 72:
-            raise ValueError("Password must be at most 72 bytes long")
-        if not v.strip():
-            raise ValueError("Password must not be blank")
-        if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
-            raise ValueError("Password must contain at least one letter and one digit")
-        if v.lower() in COMMON_PASSWORDS:
-            raise ValueError("That password is too common; choose another")
-        return v
+        return check_password_policy(v)
 
 
 class UserLogin(BaseModel):
@@ -125,6 +134,47 @@ class ResendVerificationIn(BaseModel):
     @classmethod
     def _lower_email(cls, v: str) -> str:
         return _norm_email(v)
+
+
+class ForgotPasswordIn(BaseModel):
+    """POST /api/auth/password/forgot — always answered 202."""
+
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def _lower_email(cls, v: str) -> str:
+        return _norm_email(v)
+
+
+class PasswordResetIn(BaseModel):
+    """POST /api/auth/password/reset — single-use token from the e-mail."""
+
+    token: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _policy(cls, v: str) -> str:
+        return check_password_policy(v)
+
+
+class PasswordChangeIn(BaseModel):
+    """POST /api/auth/password/change — re-authentication required.
+
+    ``refresh_token`` is the caller's own current session token: it survives
+    the revoke-others sweep so the session that changed the password keeps
+    working (A-09). Omitted → every session is revoked.
+    """
+
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=8, max_length=128)
+    refresh_token: Optional[str] = Field(default=None, max_length=300)
+
+    @field_validator("new_password")
+    @classmethod
+    def _policy(cls, v: str) -> str:
+        return check_password_policy(v)
 
 
 class EquipmentClassResponse(BaseModel):

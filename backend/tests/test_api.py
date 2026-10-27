@@ -1683,3 +1683,142 @@ def test_production_refuses_console_mail_when_verification_required():
     # a real backend passes
     s.MAIL_BACKEND = "resend"
     s.assert_production_ready()
+
+# --- AUTH_TRD Day 5: forgot / reset / change password (A-04..A-06, A-09) -----
+
+
+def test_a04_forgot_password_identical_202_for_unknown_and_known(client):
+    unknown = client.post(
+        "/api/auth/password/forgot", json={"email": "ghost-a05@test.dev"}
+    )
+    known = client.post(
+        "/api/auth/password/forgot", json={"email": "u@test.dev"}
+    )
+    assert unknown.status_code == known.status_code == 202
+    assert unknown.json() == known.json()
+
+
+def test_a04_forgot_password_capped_at_three_mails_per_hour(client, capsys):
+    from app.db.models import OneTimeToken
+
+    email = "forgot-cap@test.dev"
+    uid = _register_uid(client, email)
+    capsys.readouterr()  # drop the register mail
+
+    def _reset_tokens() -> int:
+        db = SessionLocal()
+        try:
+            return (
+                db.query(OneTimeToken.id)
+                .filter(
+                    OneTimeToken.user_id == uid,
+                    OneTimeToken.purpose == "reset_password",
+                )
+                .count()
+            )
+        finally:
+            db.close()
+
+    for _ in range(4):
+        assert client.post(
+            "/api/auth/password/forgot", json={"email": email}
+        ).status_code == 202
+    # 3 in the window (2nd/3rd/4th call), 5th silently dropped — always 202
+    assert _reset_tokens() == 3
+
+
+def test_a05_reset_revokes_all_sessions_and_token_is_single_use(client, capsys):
+    email = "a05-reset@test.dev"
+    uid = _register_uid(client, email)
+    s1 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+    s2 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+    capsys.readouterr()  # drop register mail
+
+    assert client.post(
+        "/api/auth/password/forgot", json={"email": email}
+    ).status_code == 202
+    token = _extract_verify_token(capsys)  # last mail in the box = reset link
+
+    # weak new password rejected by the shared policy, token NOT consumed
+    weak = client.post(
+        "/api/auth/password/reset", json={"token": token, "new_password": "short"}
+    )
+    assert weak.status_code == 422
+
+    ok = client.post(
+        "/api/auth/password/reset",
+        json={"token": token, "new_password": "NewPass1234"},
+    )
+    assert ok.status_code == 200
+
+    # reuse of the same token → uniform 400 (A-05)
+    reuse = client.post(
+        "/api/auth/password/reset",
+        json={"token": token, "new_password": "NewPass5678"},
+    )
+    assert reuse.status_code == 400
+    assert reuse.json()["detail"] == "Invalid or expired token"
+
+    # every session died with the reset
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s1["refresh_token"]}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s2["refresh_token"]}
+    ).status_code == 401
+
+    # old password out, new password in
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "NewPass1234"}
+    ).status_code == 200
+
+    # exactly one event per flow step (A-13)
+    assert len(_events("password_reset_request", user_id=uid)) == 1
+    assert len(_events("password_reset_done", user_id=uid)) == 1
+
+
+def test_a09_change_password_keeps_current_session_revokes_others(client):
+    email = "a09-change@test.dev"
+    uid = _register_uid(client, email)
+    s1 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+    s2 = client.post("/api/auth/login", json={"email": email, "password": "pass1234"}).json()
+
+    wrong = client.post(
+        "/api/auth/password/change",
+        headers={"Authorization": f"Bearer {s1['access_token']}"},
+        json={"current_password": "not-the-pass1", "new_password": "NewPass1234"},
+    )
+    assert wrong.status_code == 401
+
+    ok = client.post(
+        "/api/auth/password/change",
+        headers={"Authorization": f"Bearer {s1['access_token']}"},
+        json={
+            "current_password": "pass1234",
+            "new_password": "NewPass1234",
+            "refresh_token": s1["refresh_token"],
+        },
+    )
+    assert ok.status_code == 200
+
+    # the other session is dead...
+    assert client.post(
+        "/api/auth/refresh", json={"refresh_token": s2["refresh_token"]}
+    ).status_code == 401
+    # ...the session that changed the password still refreshes
+    kept = client.post(
+        "/api/auth/refresh", json={"refresh_token": s1["refresh_token"]}
+    )
+    assert kept.status_code == 200
+
+    # password actually swapped
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "NewPass1234"}
+    ).status_code == 200
+    assert len(_events("password_change", user_id=uid)) == 1

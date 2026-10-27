@@ -48,6 +48,9 @@ class User(Base):
     # AUTH_TRD §4 / Day 4: NULL until the e-mail link is clicked. The login
     # gate (REQUIRE_EMAIL_VERIFICATION) rejects NULL at login/refresh/me.
     email_verified_at = Column(DateTime, nullable=True)
+    # AUTH_TRD §4 / Day 5: stamped on reset/change; NULL for rows that have
+    # never changed their password since the column existed.
+    password_changed_at = Column(DateTime, nullable=True)
 
     conversations = relationship("Conversation", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")

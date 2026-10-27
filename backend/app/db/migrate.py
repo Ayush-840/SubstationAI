@@ -103,3 +103,7 @@ def migrate_auth_columns(engine: Engine) -> None:
             conn.execute(
                 text(f"ALTER TABLE users ADD COLUMN email_verified_at {dt_type}")
             )
+        if "password_changed_at" not in existing:
+            conn.execute(
+                text(f"ALTER TABLE users ADD COLUMN password_changed_at {dt_type}")
+            )

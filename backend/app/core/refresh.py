@@ -110,21 +110,32 @@ def revoke_by_raw(db: Session, raw: str) -> bool:
     return True
 
 
-def revoke_all_for_user(db: Session, user_id: int) -> int:
-    """Revoke every still-active token for the user (full logout)."""
-    count = (
-        db.query(RefreshToken)
-        .filter(
-            RefreshToken.user_id == user_id,
-            RefreshToken.revoked_at.is_(None),
-            RefreshToken.used_at.is_(None),
-        )
-        .update(
-            {RefreshToken.revoked_at: datetime.utcnow()},
-            synchronize_session=False,
-        )
+def revoke_all_for_user(
+    db: Session,
+    user_id: int,
+    keep_token_hash: str | None = None,
+    commit: bool = True,
+) -> int:
+    """Revoke every still-active token for the user (full logout).
+
+    ``keep_token_hash`` spares one session — password change keeps the
+    caller's own refresh token alive (A-09). ``commit=False`` lets the
+    caller fold the sweep into a larger transaction (password reset:
+    used_at + new hash + revokes commit together, §6).
+    """
+    query = db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id,
+        RefreshToken.revoked_at.is_(None),
+        RefreshToken.used_at.is_(None),
     )
-    db.commit()
+    if keep_token_hash is not None:
+        query = query.filter(RefreshToken.token_hash != keep_token_hash)
+    count = query.update(
+        {RefreshToken.revoked_at: datetime.utcnow()},
+        synchronize_session=False,
+    )
+    if commit:
+        db.commit()
     return int(count)
 
 

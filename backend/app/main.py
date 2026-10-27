@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.core.config import get_settings
 from app.db.session import engine, Base
@@ -7,9 +6,10 @@ from app.db.migrate import migrate_user_roles
 from app.api import auth, chat, catalog, procedures, diagnosis, learn, admin, feedback
 from app.api.v1 import api_router
 from app.db.mongo import get_mongo, close_mongo, ensure_indexes
-from app.core.security_middleware import add_security_middleware, apply_rate_limits
+from app.core.security_middleware import add_security_middleware
 
 settings = get_settings()
+settings.assert_production_ready()  # refuse to boot with an unsafe production config
 
 # Configure logging at startup so all loggers output to stdout (Render collects
 # stdout/stderr). Without this, loggers created via getLogger() inherit the
@@ -64,11 +64,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add security middleware (CORS, rate limiting, security headers)
+# CORS allow-list, 429 handler and security headers. Per-route limits are
+# declared with @limiter.limit(...) on the auth and chat routes themselves.
 add_security_middleware(app)
-
-# Apply rate limits to sensitive endpoints
-apply_rate_limits(app)
 
 app.include_router(api_router)
 for legacy_router in LEGACY_ROUTERS:

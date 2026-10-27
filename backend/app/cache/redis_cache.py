@@ -20,7 +20,7 @@ def get_redis() -> Redis:
     """Get Redis client (singleton)."""
     settings = get_settings()
     return redis.from_url(
-        getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
+        settings.REDIS_URL or "redis://localhost:6379/0",
         encoding="utf-8",
         decode_responses=True,
     )

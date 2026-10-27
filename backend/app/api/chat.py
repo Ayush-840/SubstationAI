@@ -12,6 +12,7 @@ from app.db.mongo import get_mongo
 from app.db.mongo_repos import ConversationRepo, MessageRepo
 from app.db.models import User, Conversation, Message, ConversationMode
 from app.core.security import get_current_user
+from app.core.config import get_settings
 from app.core.security_middleware import get_limiter
 from app.schemas import ChatRequest, ChatResponse, ConversationDoc, MessageDoc
 from app.nlp.intent import intent_classifier
@@ -19,6 +20,7 @@ from app.rag.assembler import AnswerAssembler, stream_answer
 from app.cache.redis_cache import get_cached_answer, set_cached_answer
 
 chat_rate_limit = "10000/minute" if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("TESTING") else "30/minute"
+settings = get_settings()
 limiter = get_limiter()
 
 logger = logging.getLogger(__name__)
@@ -131,7 +133,7 @@ async def _mirror_turn_to_mongo(
 
 
 @router.post("/stream")
-@limiter.limit("30/minute")
+@limiter.limit(settings.RATE_LIMIT_CHAT)
 async def chat_stream(
     request: Request,
     request_body: ChatRequest,

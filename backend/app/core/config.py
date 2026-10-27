@@ -30,11 +30,38 @@ class Settings(BaseSettings):
     MONGODB_PASSWORD: str | None = None
     MONGODB_URI: str | None = None
 
-    # JWT
+    # Environment: "development" (default) or "production". Production refuses
+    # to start with the placeholder JWT secret (see assert_production_ready).
+    APP_ENV: str = "development"
+
+    # JWT — short-lived access token + rotating refresh token (see AUTH_TRD).
     JWT_SECRET: str = "change-me"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 1440
+    JWT_EXPIRE_MINUTES: int = 15
     REFRESH_EXPIRE_DAYS: int = 7
+    # A refresh token that is replayed within this many seconds of its first
+    # use is treated as a client race (two tabs), not as theft.
+    REFRESH_REUSE_GRACE_SECONDS: int = 10
+
+    # Redis (optional): cache, deny-list, rate-limit storage. Empty = in-memory.
+    REDIS_URL: str = ""
+
+    # CORS: comma-separated exact origins; "*.example.app" wildcards allowed.
+    CORS_ALLOW_ORIGIN_REGEX: str = ""
+    CORS_ALLOW_ORIGINS: str = ""
+
+    # Rate limits (slowapi syntax). Login/register are per client IP; the
+    # failed-login throttle below is per (IP, email).
+    RATE_LIMIT_LOGIN: str = "30/minute"
+    RATE_LIMIT_REGISTER: str = "30/hour"
+    RATE_LIMIT_CHAT: str = "30/minute"
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_LOCKOUT_SECONDS: int = 900
+
+    # Demo accounts (demo@, engineer@, admin@substationiq.dev) are created only
+    # when this is true. Never enable it on a public deployment without
+    # setting DEMO_PASSWORD_* overrides.
+    SEED_DEMO_USERS: bool = False
 
     # ChromaDB (absolute default so the index resolves the same regardless of
     # the launch directory; docker-compose mounts ./data at /app/data)
@@ -58,6 +85,29 @@ class Settings(BaseSettings):
     class Config:
         env_file = str(_ENV_FILE)
         case_sensitive = True
+        # Unknown keys in .env must not crash startup (the README tells users
+        # to `cp .env.example .env`).
+        extra = "ignore"
+
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV.lower() == "production"
+
+    def assert_production_ready(self) -> None:
+        """Fail fast on unsafe production settings instead of running insecurely."""
+        if not self.is_production:
+            return
+        problems = []
+        if self.JWT_SECRET in ("", "change-me") or self.JWT_SECRET.startswith("change-this"):
+            problems.append("JWT_SECRET is unset or still a placeholder")
+        if len(self.JWT_SECRET) < 32:
+            problems.append("JWT_SECRET must be at least 32 characters")
+        if not self.CORS_ALLOW_ORIGINS and not self.CORS_ALLOW_ORIGIN_REGEX:
+            problems.append("CORS_ALLOW_ORIGINS is empty (the browser frontend would be blocked)")
+        if self.SEED_DEMO_USERS:
+            problems.append("SEED_DEMO_USERS must be false in production")
+        if problems:
+            raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
 
 
 @lru_cache()

@@ -67,6 +67,12 @@ def find_valid_token(db: Session, raw: str) -> RefreshToken:
         # the race; outside it, assume theft and end every session for the user.
         age = (datetime.utcnow() - row.used_at).total_seconds()
         if age > settings.REFRESH_REUSE_GRACE_SECONDS:
+            from app.core.audit import log_event  # local import: audit imports models
+
+            log_event(
+                db, "refresh_replay", user_id=row.user_id,
+                detail={"token_id": row.id},
+            )
             revoke_all_for_user(db, row.user_id)
             raise HTTPException(
                 status_code=401, detail="Refresh token reuse detected; please sign in again"

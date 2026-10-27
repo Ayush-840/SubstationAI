@@ -16,6 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.audit import log_event
 from app.core.config import get_settings
 from app.core.denylist import revoke as revoke_jti
 from app.core.login_throttle import record_failure, record_success, retry_after
@@ -102,6 +103,7 @@ def register(request: Request, user_data: UserCreate, db: Session = Depends(get_
         db.rollback()
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     db.refresh(user)
+    log_event(db, "register", user_id=user.id, request=request, detail={"email": user.email})
     return user
 
 
@@ -130,15 +132,28 @@ def login(
     )
     if user is None:
         _burn_hash_time(credentials.password)
-        record_failure(ip, credentials.email)
+        locked = record_failure(ip, credentials.email)
+        log_event(db, "login_fail", request=request, detail={"email": credentials.email})
+        if locked:
+            log_event(db, "lockout", request=request, detail={"email": credentials.email})
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not verify_password(credentials.password, user.password_hash):
-        record_failure(ip, credentials.email)
+        locked = record_failure(ip, credentials.email)
+        log_event(
+            db, "login_fail", user_id=user.id, request=request,
+            detail={"email": credentials.email},
+        )
+        if locked:
+            log_event(
+                db, "lockout", user_id=user.id, request=request,
+                detail={"email": credentials.email},
+            )
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     record_success(ip, credentials.email)
     refresh_raw = issue_refresh_token(db, user.id)
     set_auth_cookies(response, refresh_raw)
+    log_event(db, "login_ok", user_id=user.id, request=request)
     return _token_response(user, refresh_raw)
 
 
@@ -172,6 +187,7 @@ def refresh(
 
     refresh_raw = rotate_refresh_token(db, row)
     set_auth_cookies(response, refresh_raw)
+    log_event(db, "refresh", user_id=user.id, detail={"token_id": row.id})
     return _token_response(user, refresh_raw)
 
 
@@ -206,6 +222,7 @@ async def logout(
             await revoke_jti(jti, float(exp) if exp is not None else None)
 
     revoked = 0
+    event = "logout"
     if body is not None and body.refresh_token:
         revoked = int(revoke_by_raw(db, body.refresh_token))
     elif refresh_cookie is not None:
@@ -213,9 +230,14 @@ async def logout(
         revoked = int(revoke_by_raw(db, refresh_cookie))
     elif user_id is not None:
         revoked = revoke_all_for_user(db, int(user_id))
+        event = "logout_all"
     else:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    log_event(
+        db, event, user_id=int(user_id) if user_id is not None else None,
+        detail={"revoked_refresh_tokens": revoked},
+    )
     clear_auth_cookies(response)
     return {"ok": True, "revoked_refresh_tokens": revoked}
 

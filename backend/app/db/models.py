@@ -365,4 +365,25 @@ class RefreshToken(Base):
     user = relationship("User")
 
 
+class AuthEvent(Base):
+    """Append-only security audit log (AUTH_TRD §4, threat T14).
+
+    Every security-relevant event gets exactly one row. The code base never
+    UPDATEs or DELETEs this table; retention is handled by ops (export +
+    truncate), not by application code.
+    """
+
+    __tablename__ = "auth_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    event = Column(String(40), nullable=False, index=True)
+    ip = Column(String(45))
+    user_agent = Column(String(200))
+    detail = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("User")
+
+
 Index("ix_chunks_embedding_id", "chunks.id")  # placeholder for vector index reference

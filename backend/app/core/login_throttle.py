@@ -44,22 +44,26 @@ def retry_after(ip: str, email: str) -> int:
         return int(until - now) + 1
 
 
-def record_failure(ip: str, email: str) -> None:
+def record_failure(ip: str, email: str) -> bool:
+    """Count one failed attempt; ``True`` when this failure triggered a lock."""
     s = get_settings()
     k = _key(ip, email)
     now = time.time()
+    locked_now = False
     with _lock:
         count, start = _failures.get(k, (0, now))
         if now - start > s.LOGIN_LOCKOUT_SECONDS:
             count, start = 0, now  # old failures age out
         count += 1
         _failures[k] = (count, start)
-        if count >= s.LOGIN_MAX_FAILURES:
+        if count >= s.LOGIN_MAX_FAILURES and k not in _locked_until:
             _locked_until[k] = now + s.LOGIN_LOCKOUT_SECONDS
+            locked_now = True
         if len(_failures) > 10_000:  # bound memory under a spray attack
             for old in [x for x, (_, st) in _failures.items() if now - st > s.LOGIN_LOCKOUT_SECONDS]:
                 _failures.pop(old, None)
                 _locked_until.pop(old, None)
+    return locked_now
 
 
 def record_success(ip: str, email: str) -> None:

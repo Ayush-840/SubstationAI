@@ -29,7 +29,7 @@ from app.main import app  # noqa: E402
 from app.db.session import engine, Base, SessionLocal  # noqa: E402
 from app.catalog.loader import load_catalog_to_db, register_sample_documents  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.db.models import User, UserRole, Feedback, RefreshToken  # noqa: E402
+from app.db.models import User, UserRole, Feedback, RefreshToken, AuthEvent  # noqa: E402
 from app.core.refresh import hash_token  # noqa: E402
 from app.db.mongo import get_mongo  # noqa: E402
 from tests.mongo_fakes import FakeMongoDB  # noqa: E402
@@ -1254,4 +1254,134 @@ def test_invalid_cors_regex_fails_at_startup_not_at_first_request(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGIN_REGEX", "https://(unclosed")
     with pytest.raises(re.error):
         build_cors(Settings())
+
+
+# --- AUTH_TRD Day 1: append-only audit log (A-13, existing flows) ------------
+
+
+def _events(event: str, user_id: int | None = None, email: str | None = None) -> list:
+    db = SessionLocal()
+    try:
+        q = db.query(AuthEvent).filter(AuthEvent.event == event)
+        if user_id is not None:
+            q = q.filter(AuthEvent.user_id == user_id)
+        rows = q.all()
+        if email is not None:
+            rows = [r for r in rows if (r.detail or {}).get("email") == email]
+        return rows
+    finally:
+        db.close()
+
+
+def _uid(email: str) -> int:
+    db = SessionLocal()
+    try:
+        return int(db.query(User.id).filter(User.email == email).one())
+    finally:
+        db.close()
+
+
+def _register_uid(client, email: str) -> int:
+    r = client.post(
+        "/api/auth/register",
+        json={"name": "Audit Tester", "email": email, "password": "pass1234"},
+    )
+    assert r.status_code == 201
+    return int(r.json()["id"])
+
+
+def test_register_writes_exactly_one_register_event(client):
+    email = "aud-register@test.dev"
+    uid = _register_uid(client, email)
+    rows = _events("register", email=email)
+    assert len(rows) == 1
+    assert rows[0].user_id == uid
+    assert "password" not in (rows[0].detail or {})  # never log secrets
+
+
+def test_login_writes_ok_then_fail_events_with_generic_detail(client):
+    email = "aud-login@test.dev"
+    uid = _register_uid(client, email)
+    ok = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert ok.status_code == 200
+    assert len(_events("login_ok", user_id=uid)) == 1
+
+    fail = client.post("/api/auth/login", json={"email": email, "password": "wrong-pass1"})
+    assert fail.status_code == 401
+    assert fail.json()["detail"] == "Invalid email or password"
+    fails = _events("login_fail", user_id=uid)
+    assert len(fails) == 1
+    assert "password" not in (fails[0].detail or {})
+
+
+def test_lockout_threshold_writes_one_lockout_event(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "LOGIN_MAX_FAILURES", 2)
+    login_throttle.reset()
+    email = "aud-lockout@test.dev"
+    try:
+        before = len(_events("lockout", email=email))
+        bad = {"email": email, "password": "wrong-pass1"}  # unknown e-mail
+        assert client.post("/api/auth/login", json=bad).status_code == 401
+        assert len(_events("lockout", email=email)) == before  # 1 of 2
+        assert client.post("/api/auth/login", json=bad).status_code == 401
+        assert len(_events("lockout", email=email)) == before + 1  # threshold hit
+        assert client.post("/api/auth/login", json=bad).status_code == 429
+        assert len(_events("lockout", email=email)) == before + 1  # not re-logged
+    finally:
+        login_throttle.reset()
+
+
+def test_refresh_and_logout_write_events(client):
+    email = "aud-session@test.dev"
+    uid = _register_uid(client, email)
+    tokens = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()
+
+    before = len(_events("refresh", user_id=uid))
+    rr = client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert rr.status_code == 200
+    assert len(_events("refresh", user_id=uid)) == before + 1
+
+    lg = client.post(
+        "/api/auth/logout",
+        headers={"Authorization": f"Bearer {rr.json()['access_token']}"},
+        json={"refresh_token": rr.json()["refresh_token"]},
+    )
+    assert lg.status_code == 200
+    assert len(_events("logout", user_id=uid)) == 1
+
+    # second session, revoked wholesale → logout_all
+    tokens2 = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()
+    lg2 = client.post(
+        "/api/auth/logout",
+        headers={"Authorization": f"Bearer {tokens2['access_token']}"},
+    )
+    assert lg2.status_code == 200
+    assert len(_events("logout_all", user_id=uid)) == 1
+
+
+def test_refresh_replay_after_grace_writes_refresh_replay_event(client, monkeypatch):
+    email = "aud-replay@test.dev"
+    uid = _register_uid(client, email)
+    first = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()
+    second = client.post(
+        "/api/auth/refresh", json={"refresh_token": first["refresh_token"]}
+    )
+    assert second.status_code == 200
+    monkeypatch.setattr(get_settings(), "REFRESH_REUSE_GRACE_SECONDS", -1)
+    replay = client.post(
+        "/api/auth/refresh", json={"refresh_token": first["refresh_token"]}
+    )
+    assert replay.status_code == 401
+    assert len(_events("refresh_replay", user_id=uid)) >= 1
+    # theft response also kills the victim's successor (existing behaviour)
+    dead = client.post(
+        "/api/auth/refresh", json={"refresh_token": second.json()["refresh_token"]}
+    )
+    assert dead.status_code == 401
 

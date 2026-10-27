@@ -1,9 +1,10 @@
 import { useState, useContext, createContext, useEffect } from 'react'
 import { useAuth } from './auth'
 import { useTheme, type Theme } from './hooks/useTheme'
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Logo, Disclaimer, Wordmark } from './components/common'
-import { SourcesPanel, type CitationItem } from './components/Sources'
+import { SourcesPanel } from './components/Sources'
+import type { CitationItem } from './components/Citation'
 import Login from './pages/Login'
 import Chat from './pages/Chat'
 import Procedures from './pages/Procedures'
@@ -18,7 +19,7 @@ import Catalog from './pages/Catalog'
 import TestDetail from './pages/TestDetail'
 import CatalogEditor from './pages/CatalogEditor'
 
-type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'dev-components' | 'catalog-editor'
+type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'catalog' | 'dev-components' | 'catalog-editor'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'chat', label: 'Ask' },
@@ -31,6 +32,29 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'catalog', label: 'Catalog' },
   { id: 'catalog-editor', label: 'Catalog Editor' },
 ]
+
+// Each tab is a real route, so the URL, back button and refresh all work.
+const TAB_PATHS: Record<Tab, string> = {
+  chat: '/chat',
+  procedures: '/procedures',
+  diagnosis: '/diagnosis',
+  dga: '/dga',
+  learn: '/learn',
+  history: '/history',
+  admin: '/admin',
+  'result-checker': '/result-checker',
+  catalog: '/catalog',
+  'catalog-editor': '/catalog/editor',
+  'dev-components': '/dev/components',
+}
+
+/** Longest matching path wins, so /catalog/editor is not mistaken for /catalog. */
+function tabForPath(pathname: string): Tab {
+  const hit = (Object.keys(TAB_PATHS) as Tab[])
+    .filter((t) => pathname === TAB_PATHS[t] || pathname.startsWith(TAB_PATHS[t] + '/'))
+    .sort((a, b) => TAB_PATHS[b].length - TAB_PATHS[a].length)[0]
+  return hit ?? 'chat'
+}
 
 const ENGINEER_ONLY: Tab[] = ['diagnosis', 'dga', 'catalog-editor']
 
@@ -61,9 +85,13 @@ export function useSources() {
 }
 
 function Shell() {
-  const { user, logout } = useAuth()
+  const { user: authUser, logout } = useAuth()
+  const user = authUser!  // Shell only renders behind PrivateRoute
   const { theme, setTheme } = useTheme()
-  const [tab, setTab] = useState<Tab>('chat')
+  const location = useLocation()
+  const navigate = useNavigate()
+  const tab = tabForPath(location.pathname)
+  const setTab = (t: Tab) => navigate(TAB_PATHS[t])
   const [activeSource, setActiveSource] = useState<CitationItem | null>(null)
 
   const isEngineerPlus = user.role === 'engineer' || user.role === 'admin'
@@ -74,12 +102,7 @@ function Shell() {
     ...allowedTabs.map((t) => t.id),
     ...(user.role === 'admin' ? ['admin' as Tab] : []),
   ]
-  const isDevUrl = typeof window !== 'undefined' && (
-    window.location.pathname === '/dev/components' ||
-    window.location.hash === '#/dev/components' ||
-    window.location.hash === '#dev-components'
-  )
-  const isDev = isDevUrl || tab === 'dev-components'
+  const isDev = tab === 'dev-components'
 
   const activeTab: Tab = tabs.includes(tab) ? tab : 'chat'
   const allTabDefs = [...TABS, { id: 'admin' as Tab, label: 'Admin' }]
@@ -89,6 +112,9 @@ function Shell() {
   const roleLabel = ROLE_LABELS[user.role] ?? user.role
 
   const mobileTabs = tabs.slice(0, 4)
+
+  // A trainee typing /dga or /admin gets sent home instead of seeing a page the API will refuse.
+  if (!isDev && !tabs.includes(tab)) return <Navigate to="/chat" replace />
 
   const openSource = (source: CitationItem) => {
     setActiveSource(source)
@@ -236,12 +262,11 @@ function Shell() {
           </div>
         </main>
 
-        {/* Desktop sources panel — right drawer 360px */}
+        {/* Sources: right drawer on desktop, bottom sheet on mobile (the panel is responsive) */}
         <SourcesPanel
           source={activeSource}
           isOpen={Boolean(activeSource)}
           onClose={closeSources}
-          className="hidden md:block"
         />
 
         {/* Mobile bottom bar — max 4 items, text labels always visible */}
@@ -288,20 +313,20 @@ function Shell() {
           })}
         </nav>
 
-        {/* Mobile sources bottom sheet */}
-        <SourcesPanel
-          source={activeSource}
-          isOpen={Boolean(activeSource)}
-          onClose={closeSources}
-          className="md:hidden"
-        />
       </div>
     </SourcesContext.Provider>
   )
 }
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
+  const { user, booting } = useAuth()
+  if (booting) {
+    return (
+      <div role="status" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--muted)', background: 'var(--bg)', padding: 24, textAlign: 'center' }}>
+        Restoring your session… the server may be waking up, this can take up to a minute.
+      </div>
+    )
+  }
   if (!user) return <Navigate to="/login" replace />
   return <>{children}</>
 }

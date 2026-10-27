@@ -1,5 +1,8 @@
 # Deployment notes
 
+> **Start with [`docs/DEPLOY_FIX_TRD.md`](docs/DEPLOY_FIX_TRD.md)** — it supersedes the CORS, Docker, Vercel and
+> URL statements below, which described the setup before the Render/Vercel failures were diagnosed.
+
 This file complements `render.yaml`, `vercel.json`, and the Dockerfiles with
 the reasoning behind the deployment setup and the current status of each
 concern. It is not consumed by Render or Vercel; it is for humans
@@ -19,7 +22,7 @@ These must be set in the respective dashboards before the services work.
 
 | Variable | Value | Notes |
 | --- | --- | --- |
-| `VITE_API_URL` | `https://backend-h8ikkpyfy-ayush-840s-projects.onrender.com` | Must match the live backend URL. The current value in `frontend/.env.local` is empty, which breaks the API client in production. |
+| `VITE_API_URL` | `https://<your-render-service>.onrender.com` | Copy the exact URL shown at the top of the Render service page (a Render URL is `<service-name>.onrender.com`, with no hash or team name). No trailing slash, no `/api`. The Vercel build now fails with a clear message if this is missing or wrong (`frontend/scripts/check-env.mjs`). |
 | `VITE_DEMO_MODE` | `true` | Optional. Shows demo credentials on the login page. |
 
 `vercel.json` only configures rewrites; the API base URL comes from

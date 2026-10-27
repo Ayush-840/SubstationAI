@@ -1,61 +1,84 @@
+# Render Blueprint — API (Docker), managed Postgres, Key Value (Redis).
+# Field names checked against https://render.com/docs/yaml-spec
+#
+# Free-tier facts that shape this file:
+#   * the web service sleeps after ~15 min idle (first request takes ~30-60 s);
+#   * no persistent disk on free web services; accounts live in Postgres, never on disk;
+#     the default image is the slim one (INSTALL_HEAVY=false), see Dockerfile;
+#   * free Postgres is time-limited by Render; upgrade or re-create before a demo/viva.
+
 services:
   - type: web
     name: substationiq-api
     runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
-    buildCommand: ""
-    startCommand: ""
+    healthCheckPath: /health
     envVars:
-      # LLM
+      # --- security / auth (see AUTH_TRD.md) ---
+      - key: APP_ENV
+        value: production            # enables startup safety checks (strong secret, CORS set, no demo users)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "15"                  # short-lived access token; the refresh token keeps users signed in
+      - key: REFRESH_EXPIRE_DAYS
+        value: "7"
+      - key: REFRESH_REUSE_GRACE_SECONDS
+        value: "10"
+      - key: SEED_DEMO_USERS
+        value: "false"               # never ship public demo/admin passwords
+      - key: LOGIN_MAX_FAILURES
+        value: "5"
+      - key: LOGIN_LOCKOUT_SECONDS
+        value: "900"
+      - key: RATE_LIMIT_LOGIN
+        value: 30/minute
+      - key: RATE_LIMIT_REGISTER
+        value: 30/hour
+      - key: RATE_LIMIT_CHAT
+        value: 30/minute
+
+      # --- CORS: set these to YOUR Vercel URLs ---
+      - key: FRONTEND_URL
+        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+      - key: CORS_ALLOW_ORIGINS
+        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+      - key: CORS_ALLOW_ORIGIN_REGEX
+        # this team's Vercel preview/alias URLs only -- NOT every *.vercel.app site
+        value: 'https://frontend-[a-z0-9-]*ayush-840s-projects\.vercel\.app'
+
+      # --- data stores ---
+      - key: DATABASE_URL
+        fromDatabase:
+          name: substationiq-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: substationiq-redis
+          property: connectionString
+      - key: MONGO_URL
+        sync: false                  # paste your MongoDB Atlas URI in the dashboard
+      - key: MONGO_DB
+        value: substationiq
+
+      # --- LLM ---
       - key: LLM_PROVIDER
         value: gemini
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
         sync: false
-      - key: OLLAMA_MODEL
-        value: llama3.1:8b
-      - key: OLLAMA_BASE_URL
-        value: http://localhost:11434
-
-      # Embeddings
       - key: EMBED_MODEL
         value: BAAI/bge-small-en-v1.5
 
-      # Database - PostgreSQL (managed by Render)
-      - key: DATABASE_URL
-        fromDatabase:
-          name: substationiq-db
-          property: connectionString
-
-      # MongoDB (Atlas or self-hosted)
-      - key: MONGO_URL
-        sync: false
-      - key: MONGO_DB
-        value: substationiq
-
-      # Redis (managed by Render)
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: substationiq-redis
-          property: connectionString
-
-      # JWT
-      - key: JWT_SECRET
-        generateValue: true
-      - key: JWT_ALGORITHM
-        value: HS256
-      - key: JWT_EXPIRE_MINUTES
-        value: "1440"
-      - key: REFRESH_EXPIRE_DAYS
-        value: "7"
-
-      # ChromaDB (persistent disk)
+      # --- retrieval / upload ---
       - key: CHROMA_PATH
-        value: /app/data/chroma
-
-      # Retrieval
+        value: /tmp/chroma           # only used by the INSTALL_HEAVY image
       - key: CONFIDENCE_THRESHOLD
         value: "0.35"
       - key: TOP_K_VECTOR
@@ -64,44 +87,19 @@ services:
         value: "20"
       - key: TOP_K_RERANK
         value: "6"
-
-      # Upload
       - key: MAX_UPLOAD_MB
         value: "25"
-
-      # Frontend URL (for CORS, HSTS and link generation)
-      - key: FRONTEND_URL
-        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
-
-      # CORS allow-list (comma-separated, exact origins only)
-      - key: CORS_ALLOW_ORIGINS
-        value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
-
-      # CORS origin regex (optional): allows all Vercel preview subdomains
-      - key: CORS_ALLOW_ORIGIN_REGEX
-        value: 'https://.*\.vercel\.app'
-
-      # Rate limiting
-      - key: RATE_LIMIT_LOGIN
-        value: 5/minute
-      - key: RATE_LIMIT_CHAT
-        value: 30/minute
-
-      # Logging
       - key: LOG_LEVEL
         value: INFO
+
+  - type: keyvalue
+    name: substationiq-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []                  # internal connections only
 
 databases:
   - name: substationiq-db
     databaseName: substationiq
     user: substation
     plan: free
-
-  - name: substationiq-redis
-    plan: free
-    maxmemoryPolicy: allkeys-lru
-
-disk:
-  name: chroma-data
-  mountPath: /app/data
-  sizeGB: 1

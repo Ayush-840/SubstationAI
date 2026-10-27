@@ -107,6 +107,17 @@ def migrate_auth_columns(engine: Engine) -> None:
             conn.execute(
                 text(f"ALTER TABLE users ADD COLUMN password_changed_at {dt_type}")
             )
+        # Day 7: TOTP columns. Existing rows read as "MFA off / no secret".
+        if "totp_secret_enc" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN totp_secret_enc TEXT"))
+        if "totp_enabled" not in existing:
+            conn.execute(
+                text("ALTER TABLE users ADD COLUMN totp_enabled BOOLEAN DEFAULT FALSE")
+            )
+        if "totp_last_timestep" not in existing:
+            conn.execute(
+                text("ALTER TABLE users ADD COLUMN totp_last_timestep INTEGER")
+            )
 
         # Day 6: device tracking on refresh_tokens.
         if "refresh_tokens" in inspector.get_table_names():

@@ -34,6 +34,8 @@ def check_runtime_stack() -> None:
     _required("slowapi", "rate limiting / token deny-list support")
     _required("redis.asyncio", "Redis-backed deny-list and cache")
     _required("argon2", "password hashing (argon2id)")
+    _required("pyotp", "TOTP two-factor authentication")
+    _required("cryptography", "Fernet encryption for TOTP secrets")
 
     if _missing:
         lines = ["Missing runtime dependency(ies):"]

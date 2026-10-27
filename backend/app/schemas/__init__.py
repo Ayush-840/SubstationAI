@@ -177,6 +177,19 @@ class PasswordChangeIn(BaseModel):
         return check_password_policy(v)
 
 
+class MfaEnableIn(BaseModel):
+    """POST /api/auth/mfa/enable — first valid TOTP code confirms enrolment."""
+
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaDisableIn(BaseModel):
+    """POST /api/auth/mfa/disable — password re-auth + TOTP or recovery code."""
+
+    password: str = Field(min_length=1, max_length=1024)
+    code: str = Field(min_length=6, max_length=32)
+
+
 class EquipmentClassResponse(BaseModel):
     id: int
     name: str

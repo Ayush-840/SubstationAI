@@ -29,7 +29,7 @@ from app.main import app  # noqa: E402
 from app.db.session import engine, Base, SessionLocal  # noqa: E402
 from app.catalog.loader import load_catalog_to_db, register_sample_documents  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.db.models import User, UserRole, Feedback, RefreshToken, AuthEvent  # noqa: E402
+from app.db.models import User, UserRole, Feedback, RefreshToken, AuthEvent, RecoveryCode  # noqa: E402
 from app.core.refresh import hash_token  # noqa: E402
 from app.db.mongo import get_mongo  # noqa: E402
 from tests.mongo_fakes import FakeMongoDB  # noqa: E402
@@ -1214,7 +1214,12 @@ def test_production_refuses_unsafe_configuration():
     with pytest.raises(RuntimeError) as err:
         unsafe.assert_production_ready()
     assert "JWT_SECRET" in str(err.value) and "CORS_ALLOW_ORIGINS" in str(err.value)
-    Settings(APP_ENV="production", JWT_SECRET="x" * 40, CORS_ALLOW_ORIGINS="https://a.app").assert_production_ready()
+    Settings(
+        APP_ENV="production",
+        JWT_SECRET="x" * 40,
+        CORS_ALLOW_ORIGINS="https://a.app",
+        TOTP_ENCRYPTION_KEY="ZiFfQePsI6NwHLzy15aXCdukWeXbeF-EwvRY8jufxk0=",
+    ).assert_production_ready()
     Settings(APP_ENV="development").assert_production_ready()  # dev stays permissive
 
 
@@ -1285,6 +1290,12 @@ def _uid(email: str) -> int:
         return int(db.query(User.id).filter(User.email == email).scalar())
     finally:
         db.close()
+
+
+def _login_token(client, email: str, password: str = "pass1234") -> str:
+    r = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
 
 
 def _register_uid(client, email: str) -> int:
@@ -1677,6 +1688,7 @@ def test_production_refuses_console_mail_when_verification_required():
         CORS_ALLOW_ORIGINS="https://example.vercel.app",
         REQUIRE_EMAIL_VERIFICATION=True,
         MAIL_BACKEND="console",
+        TOTP_ENCRYPTION_KEY="ZiFfQePsI6NwHLzy15aXCdukWeXbeF-EwvRY8jufxk0=",
     )
     with pytest.raises(RuntimeError, match="MAIL_BACKEND"):
         s.assert_production_ready()
@@ -1965,3 +1977,183 @@ def test_logout_all_revokes_every_session(client):
         "/api/auth/me", headers={"Authorization": f"Bearer {s1['access_token']}"}
     ).status_code == 401
     assert len(_events("logout_all", user_id=uid)) == 1
+
+# --- AUTH_TRD Day 7: TOTP enrol/enable/disable + recovery codes (A-06, A-07) --
+
+def test_a06_totp_window_and_replayed_code():
+    from datetime import timezone
+
+    import pyotp
+
+    from app.core.mfa import generate_totp_secret, verify_totp_code
+
+    secret = generate_totp_secret()
+    totp = pyotp.TOTP(secret)
+    step = 10_000_000  # fixed timestep: no clock flake
+    now = step * 30 + 5  # five seconds into the step
+
+    def code_at(s: int) -> str:
+        return totp.at(datetime.fromtimestamp(s * 30, tz=timezone.utc))
+
+    # valid now → accept, returns the timestep
+    assert verify_totp_code(secret, code_at(step), None, now=now) == step
+    # one step old → accept
+    assert verify_totp_code(secret, code_at(step - 1), None, now=now) == step - 1
+    # two steps old → reject
+    assert verify_totp_code(secret, code_at(step - 2), None, now=now) is None
+    # replay of an already-consumed step → reject (single-use, A-06)
+    assert verify_totp_code(secret, code_at(step), step, now=now) is None
+    # malformed input → reject
+    assert verify_totp_code(secret, "12ab56", None, now=now) is None
+    assert verify_totp_code(secret, "12345", None, now=now) is None
+
+
+def test_a07_recovery_code_is_single_use():
+    from app.core.mfa import (
+        consume_recovery_code,
+        generate_recovery_code,
+        hash_recovery_code,
+    )
+
+    db = SessionLocal()
+    try:
+        uid = _uid("u@test.dev")
+        code = generate_recovery_code()
+        db.add(RecoveryCode(user_id=uid, code_hash=hash_recovery_code(code)))
+        db.commit()
+
+        assert consume_recovery_code(db, uid, code) is True
+        db.commit()
+        # second use of the same code → rejected (A-07)
+        assert consume_recovery_code(db, uid, code) is False
+        # an unknown code → rejected
+        assert consume_recovery_code(db, uid, generate_recovery_code()) is False
+
+        # normalisation: lowercase and dash-stripped still match
+        code2 = generate_recovery_code()
+        db.add(RecoveryCode(user_id=uid, code_hash=hash_recovery_code(code2)))
+        db.commit()
+        assert consume_recovery_code(db, uid, code2.lower().replace("-", "")) is True
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_mfa_setup_enable_disable_flow(client):
+    import pyotp
+
+    email = "mfa-flow@test.dev"
+    uid = _register_uid(client, email)
+    auth = {"Authorization": f"Bearer {_login_token(client, email)}"}
+
+    # setup requires authentication
+    assert client.post("/api/auth/mfa/setup").status_code == 401
+
+    # stage a secret: shown once, stored encrypted, NOT active yet
+    setup = client.post("/api/auth/mfa/setup", headers=auth)
+    assert setup.status_code == 200
+    secret = setup.json()["secret"]
+    assert setup.json()["otpauth_uri"].startswith("otpauth://totp/")
+    db = SessionLocal()
+    try:
+        row = db.query(User).filter(User.id == uid).one()
+        assert row.totp_secret_enc and secret not in row.totp_secret_enc
+        assert not row.totp_enabled
+    finally:
+        db.close()
+
+    # enable with a wrong code → 400, still not enabled
+    bad = client.post("/api/auth/mfa/enable", headers=auth, json={"code": "000000"})
+    assert bad.status_code == 400
+    # enable with the real code → 10 recovery codes, shown once
+    code = pyotp.TOTP(secret).now()
+    ok = client.post("/api/auth/mfa/enable", headers=auth, json={"code": code})
+    assert ok.status_code == 200
+    codes = ok.json()["recovery_codes"]
+    assert len(codes) == 10
+    assert all(len(c) == 11 and c[5] == "-" for c in codes)
+
+    db = SessionLocal()
+    try:
+        row = db.query(User).filter(User.id == uid).one()
+        assert row.totp_enabled
+        stored = (
+            db.query(RecoveryCode).filter(RecoveryCode.user_id == uid).count()
+        )
+        assert stored == 10
+    finally:
+        db.close()
+    assert len(_events("mfa_enabled", user_id=uid)) == 1
+
+    # second setup / enable while enabled → 409
+    assert client.post("/api/auth/mfa/setup", headers=auth).status_code == 409
+    assert client.post(
+        "/api/auth/mfa/enable", headers=auth, json={"code": code}
+    ).status_code == 409
+
+    # disable needs the password: wrong one → 401
+    wrong = client.post(
+        "/api/auth/mfa/disable",
+        headers=auth,
+        json={"password": "not-the-pass1", "code": code},
+    )
+    assert wrong.status_code == 401
+    # valid password + a recovery code → off, secret and codes wiped.
+    # (A fresh TOTP in the SAME step would be a replay of the code already
+    # consumed at enable — correctly rejected by A-06 — so the natural
+    # same-window fallback is a recovery code, which is what it is for.)
+    off = client.post(
+        "/api/auth/mfa/disable",
+        headers=auth,
+        json={"password": "pass1234", "code": codes[0]},
+    )
+    assert off.status_code == 200
+    db = SessionLocal()
+    try:
+        row = db.query(User).filter(User.id == uid).one()
+        assert not row.totp_enabled
+        assert row.totp_secret_enc is None
+        assert (
+            db.query(RecoveryCode).filter(RecoveryCode.user_id == uid).count()
+            == 0
+        )
+    finally:
+        db.close()
+    assert len(_events("mfa_disabled", user_id=uid)) == 1
+
+    # disable again → 400 (nothing to disable)
+    assert client.post(
+        "/api/auth/mfa/disable",
+        headers=auth,
+        json={"password": "pass1234", "code": "123456"},
+    ).status_code == 400
+
+
+def test_mfa_endpoints_without_setup_or_auth(client):
+    email = "mfa-edge@test.dev"
+    _register_uid(client, email)
+    auth = {"Authorization": f"Bearer {_login_token(client, email)}"}
+    # enable before setup → 400
+    assert client.post(
+        "/api/auth/mfa/enable", headers=auth, json={"code": "123456"}
+    ).status_code == 400
+    # disable before enable → 400
+    assert client.post(
+        "/api/auth/mfa/disable",
+        headers=auth,
+        json={"password": "pass1234", "code": "123456"},
+    ).status_code == 400
+    # unauthenticated → 401
+    assert client.post("/api/auth/mfa/enable", json={"code": "123456"}).status_code == 401
+    assert client.post(
+        "/api/auth/mfa/disable", json={"password": "x", "code": "123456"}
+    ).status_code == 401
+
+
+def test_production_refuses_missing_totp_encryption_key():
+    with pytest.raises(RuntimeError, match="TOTP_ENCRYPTION_KEY"):
+        Settings(
+            APP_ENV="production",
+            JWT_SECRET="x" * 40,
+            CORS_ALLOW_ORIGINS="https://a.app",
+        ).assert_production_ready()

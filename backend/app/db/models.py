@@ -51,6 +51,13 @@ class User(Base):
     # AUTH_TRD §4 / Day 5: stamped on reset/change; NULL for rows that have
     # never changed their password since the column existed.
     password_changed_at = Column(DateTime, nullable=True)
+    # AUTH_TRD §4 / Day 7: TOTP two-factor. The shared secret is stored
+    # Fernet-encrypted (TOTP_ENCRYPTION_KEY); ``totp_enabled`` only flips
+    # after the first code is confirmed. ``totp_last_timestep`` makes each
+    # code single-use (A-06 replay rejection).
+    totp_secret_enc = Column(Text, nullable=True)
+    totp_enabled = Column(Boolean, default=False, nullable=True)
+    totp_last_timestep = Column(Integer, nullable=True)
 
     conversations = relationship("Conversation", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")
@@ -416,6 +423,26 @@ class OneTimeToken(Base):
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class RecoveryCode(Base):
+    """One-time MFA fallback codes (AUTH_TRD §4 / Day 7).
+
+    Ten codes per MFA enablement; only the SHA-256 of the normalised code is
+    stored, and ``used_at`` makes each code single-use (A-07).
+    """
+
+    __tablename__ = "recovery_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    code_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    used_at = Column(DateTime, nullable=True)
 
     user = relationship("User")
 

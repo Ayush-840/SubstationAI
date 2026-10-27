@@ -28,7 +28,7 @@ RUN pip install -r requirements.txt \
          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-heavy.txt; \
        fi \
     # Fail the build (seconds) -- not a 15-minute "no open ports" timeout -- if a startup import is missing.
-    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, psycopg2, motor, yaml, rapidfuzz, reportlab, jose, passlib, bcrypt, argon2"
+    && python -c "import fastapi, uvicorn, slowapi, redis, sqlalchemy, psycopg2, motor, yaml, rapidfuzz, reportlab, jose, passlib, bcrypt, argon2, pyotp, cryptography"
 
 COPY . .
 

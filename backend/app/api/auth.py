@@ -23,6 +23,17 @@ from app.core.config import get_settings
 from app.core.denylist import revoke as revoke_jti
 from app.core.login_throttle import record_failure, record_success, retry_after
 from app.core.mail import send_mail
+from app.core.mfa import (
+    RECOVERY_CODE_COUNT,
+    consume_recovery_code,
+    decrypt_secret,
+    encrypt_secret,
+    generate_recovery_code,
+    generate_totp_secret,
+    hash_recovery_code,
+    otpauth_uri,
+    verify_totp_code,
+)
 from app.core.refresh import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -48,11 +59,13 @@ from app.core.security import (
 )
 from app.core.security_middleware import get_limiter
 from app.core.tokens import consume_one_time_token, create_one_time_token
-from app.db.models import OneTimeToken, RefreshToken, User, UserRole
+from app.db.models import OneTimeToken, RecoveryCode, RefreshToken, User, UserRole
 from app.db.session import get_db
 from app.schemas import (
     ForgotPasswordIn,
     LogoutRequest,
+    MfaDisableIn,
+    MfaEnableIn,
     PasswordChangeIn,
     PasswordResetIn,
     RefreshRequest,
@@ -600,3 +613,95 @@ async def logout_all(
     )
     clear_auth_cookies(response)
     return {"ok": True, "revoked_refresh_tokens": revoked}
+
+
+@router.post("/mfa/setup")
+def mfa_setup(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stage a new TOTP secret. Nothing is active until /mfa/enable confirms
+    the first code; calling setup again replaces any pending secret."""
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=409, detail="MFA is already enabled")
+    secret = generate_totp_secret()
+    current_user.totp_secret_enc = encrypt_secret(secret)
+    current_user.totp_last_timestep = None
+    db.commit()
+    return {
+        "secret": secret,  # shown once, for manual entry into an app
+        "otpauth_uri": otpauth_uri(secret, current_user.email),
+    }
+
+
+@router.post("/mfa/enable")
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def mfa_enable(
+    payload: MfaEnableIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Confirm with the first valid code → MFA on + ten single-use recovery
+    codes (shown once). An invalid code is a plain 400."""
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=409, detail="MFA is already enabled")
+    if not current_user.totp_secret_enc:
+        raise HTTPException(status_code=400, detail="Run MFA setup first")
+    secret = decrypt_secret(current_user.totp_secret_enc)
+    step = verify_totp_code(secret, payload.code, current_user.totp_last_timestep)
+    if step is None:
+        raise HTTPException(status_code=400, detail="Invalid code")
+
+    current_user.totp_last_timestep = step
+    current_user.totp_enabled = True
+    # A fresh set replaces anything left from a previous enable cycle.
+    db.query(RecoveryCode).filter(RecoveryCode.user_id == current_user.id).delete()
+    codes = [generate_recovery_code() for _ in range(RECOVERY_CODE_COUNT)]
+    for code in codes:
+        db.add(
+            RecoveryCode(user_id=current_user.id, code_hash=hash_recovery_code(code))
+        )
+    db.commit()
+    log_event(db, "mfa_enabled", user_id=current_user.id, request=request)
+    return {"recovery_codes": codes}
+
+
+@router.post("/mfa/disable")
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def mfa_disable(
+    payload: MfaDisableIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Turn MFA off: password re-authentication plus a TOTP code or a
+    recovery code (whichever the user still has)."""
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="MFA is not enabled")
+    if not verify_password(payload.password, current_user.password_hash):
+        record_failure(_client_ip(request), current_user.email)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    secret = (
+        decrypt_secret(current_user.totp_secret_enc)
+        if current_user.totp_secret_enc
+        else None
+    )
+    step = (
+        verify_totp_code(secret, payload.code, current_user.totp_last_timestep)
+        if secret
+        else None
+    )
+    if step is not None:
+        current_user.totp_last_timestep = step
+    elif not consume_recovery_code(db, current_user.id, payload.code):
+        raise HTTPException(status_code=400, detail="Invalid code")
+
+    current_user.totp_enabled = False
+    current_user.totp_secret_enc = None
+    current_user.totp_last_timestep = None
+    db.query(RecoveryCode).filter(RecoveryCode.user_id == current_user.id).delete()
+    db.commit()
+    log_event(db, "mfa_disabled", user_id=current_user.id, request=request)
+    return {"ok": True}

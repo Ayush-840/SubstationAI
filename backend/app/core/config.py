@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     # must also configure a real MAIL_BACKEND (assert_production_ready).
     REQUIRE_EMAIL_VERIFICATION: bool = False
 
+    # Fernet key for at-rest TOTP secrets (AUTH_TRD Day 7). Empty in dev:
+    # a stable key is derived from JWT_SECRET instead. Production refuses
+    # to boot without an explicit key (assert_production_ready).
+    TOTP_ENCRYPTION_KEY: str = ""
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
@@ -127,6 +132,10 @@ class Settings(BaseSettings):
         if self.REQUIRE_EMAIL_VERIFICATION and self.MAIL_BACKEND == "console":
             problems.append(
                 "REQUIRE_EMAIL_VERIFICATION needs a real MAIL_BACKEND (smtp/resend), not console"
+            )
+        if not self.TOTP_ENCRYPTION_KEY:
+            problems.append(
+                "TOTP_ENCRYPTION_KEY is unset (MFA secrets must not be encrypted with a derived dev key)"
             )
         if problems:
             raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))

@@ -53,11 +53,14 @@ def password_hash_needs_upgrade(hashed_password: str) -> bool:
     return not hashed_password.startswith("$argon2id$")
 
 
-def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta = None, typ: str = "access") -> str:
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=settings.JWT_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iat": now, "typ": "access"})
+    # ``typ`` binds a token to one job: "access" for API calls, "mfa" for the
+    # 5-minute second-factor challenge (A-08: neither works in the other's
+    # place — get_current_user rejects anything that is not "access").
+    to_encode.update({"exp": expire, "iat": now, "typ": typ})
     # jti identifies this issuance so /auth/logout can deny-list exactly this
     # token; setdefault lets callers supply their own id.
     to_encode.setdefault("jti", uuid4().hex)

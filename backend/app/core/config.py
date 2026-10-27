@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_CHAT: str = "30/minute"
     LOGIN_MAX_FAILURES: int = 5
     LOGIN_LOCKOUT_SECONDS: int = 900
+    # MFA code failures are scoped to one mfa_token (AUTH_TRD §6): 5 wrong
+    # codes lock that challenge for 15 minutes — a fresh login starts over.
+    MFA_MAX_FAILURES: int = 5
+    MFA_LOCK_SECONDS: int = 900
 
     # Demo accounts (demo@, engineer@, admin@substationiq.dev) are created only
     # when this is true. Never enable it on a public deployment without

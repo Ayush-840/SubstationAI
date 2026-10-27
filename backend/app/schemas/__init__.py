@@ -190,6 +190,14 @@ class MfaDisableIn(BaseModel):
     code: str = Field(min_length=6, max_length=32)
 
 
+class MfaVerifyIn(BaseModel):
+    """POST /api/auth/mfa/verify — finish a login that stopped at the
+    second factor: purpose-bound mfa_token + TOTP or recovery code."""
+
+    mfa_token: str = Field(min_length=1, max_length=2000)
+    code: str = Field(min_length=6, max_length=32)
+
+
 class EquipmentClassResponse(BaseModel):
     id: int
     name: str

@@ -2157,3 +2157,189 @@ def test_production_refuses_missing_totp_encryption_key():
             JWT_SECRET="x" * 40,
             CORS_ALLOW_ORIGINS="https://a.app",
         ).assert_production_ready()
+
+# --- AUTH_TRD Day 8: MFA challenge on login (A-08) ----------------------------
+
+
+def _enable_mfa(client, email: str) -> tuple[dict, str, list]:
+    """Enable MFA for an existing account; returns (headers, secret, codes)."""
+    import pyotp
+
+    auth = {"Authorization": f"Bearer {_login_token(client, email)}"}
+    setup = client.post("/api/auth/mfa/setup", headers=auth)
+    assert setup.status_code == 200
+    secret = setup.json()["secret"]
+    enable = client.post(
+        "/api/auth/mfa/enable", headers=auth, json={"code": pyotp.TOTP(secret).now()}
+    )
+    assert enable.status_code == 200
+    return auth, secret, enable.json()["recovery_codes"]
+
+
+def test_a08_mfa_token_is_purpose_bound(client, monkeypatch):
+    import time as _time
+
+    import app.core.mfa as mfa_mod
+    import pyotp
+
+    email = "a08-mfa@test.dev"
+    uid = _register_uid(client, email)
+    pre_auth, secret, _codes = _enable_mfa(client, email)
+    pre_access = pre_auth["Authorization"].split(" ", 1)[1]
+
+    # password login now stops at the second factor: challenge, no session
+    r = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mfa_required"] is True
+    mfa_token = body["mfa_token"]
+    assert "access_token" not in body and "refresh_token" not in body
+
+    # A-08: the challenge is not an access token...
+    assert (
+        client.get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {mfa_token}"}
+        ).status_code
+        == 401
+    )
+    # ...and an access token is not a challenge
+    assert (
+        client.post(
+            "/api/auth/mfa/verify",
+            json={"mfa_token": pre_access, "code": "123456"},
+        ).status_code
+        == 401
+    )
+    # a wrong code on the real challenge → 401
+    assert (
+        client.post(
+            "/api/auth/mfa/verify",
+            json={"mfa_token": mfa_token, "code": "123456"},
+        ).status_code
+        == 401
+    )
+
+    # garbage challenge → 401
+    assert (
+        client.post(
+            "/api/auth/mfa/verify", json={"mfa_token": "not.a.jwt", "code": "123456"}
+        ).status_code
+        == 401
+    )
+
+    # valid code completes the login and yields a normal session.
+    # Enable already consumed the current step (A-06 single-use), so shift
+    # the challenge clock one step forward — a real user would just wait
+    # for the next 30 s window.
+    class _ShiftedClock:
+        def time(self):
+            return _time.time() + 31
+
+    monkeypatch.setattr(mfa_mod, "time", _ShiftedClock())
+    shifted_step = int((_time.time() + 31) // 30)
+    fresh_code = pyotp.TOTP(secret).at(shifted_step * 30)
+    ok = client.post(
+        "/api/auth/mfa/verify",
+        json={"mfa_token": mfa_token, "code": fresh_code},
+    )
+    assert ok.status_code == 200
+    tokens = ok.json()
+    assert tokens["access_token"] and tokens["refresh_token"]
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    assert me.status_code == 200 and me.json()["email"] == email
+
+    # A-13: login_ok once for the password login, once with mfa:true here
+    rows = _events("login_ok", user_id=uid)
+    assert len(rows) == 2
+    assert (rows[-1].detail or {}).get("mfa") is True
+    assert "mfa" not in (rows[0].detail or {})
+
+
+def test_mfa_verify_locks_after_five_wrong_codes(client):
+    import pyotp
+
+    email = "mfa-lock@test.dev"
+    uid = _register_uid(client, email)
+    _auth, secret, codes = _enable_mfa(client, email)
+
+    def wrong_code() -> str:
+        # guaranteed not to equal the current valid code
+        valid = int(pyotp.TOTP(secret).now())
+        return str((valid + 1) % 10**6).zfill(6)
+
+    challenge = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()["mfa_token"]
+
+    for _ in range(5):
+        bad = client.post(
+            "/api/auth/mfa/verify",
+            json={"mfa_token": challenge, "code": wrong_code()},
+        )
+        assert bad.status_code == 401
+
+    # sixth attempt → 429 + Retry-After (§6)
+    locked = client.post(
+        "/api/auth/mfa/verify",
+        json={"mfa_token": challenge, "code": wrong_code()},
+    )
+    assert locked.status_code == 429
+    assert "Retry-After" in locked.headers
+    # even the right code is refused while this challenge is locked
+    assert (
+        client.post(
+            "/api/auth/mfa/verify",
+            json={"mfa_token": challenge, "code": pyotp.TOTP(secret).now()},
+        ).status_code
+        == 429
+    )
+
+    # a fresh login gets a fresh (unlocked) challenge — verified with an
+    # unused recovery code (the enable step already consumed the current
+    # TOTP step, A-06 single-use)
+    fresh = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()["mfa_token"]
+    ok = client.post(
+        "/api/auth/mfa/verify",
+        json={"mfa_token": fresh, "code": codes[0]},
+    )
+    assert ok.status_code == 200
+
+    # exactly one mfa_fail event per refused code (A-13)
+    assert len(_events("mfa_fail", user_id=uid)) == 5
+
+
+def test_mfa_verify_accepts_recovery_code_once(client):
+    email = "mfa-recovery@test.dev"
+    uid = _register_uid(client, email)
+    _auth, _secret, codes = _enable_mfa(client, email)
+
+    challenge = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()["mfa_token"]
+    ok = client.post(
+        "/api/auth/mfa/verify",
+        json={"mfa_token": challenge, "code": codes[0]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["access_token"]
+
+    # the same recovery code at the next login → rejected (A-07 end-to-end)
+    challenge2 = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    ).json()["mfa_token"]
+    bad = client.post(
+        "/api/auth/mfa/verify",
+        json={"mfa_token": challenge2, "code": codes[0]},
+    )
+    assert bad.status_code == 401
+    # a different (unused) recovery code still works for that challenge
+    ok2 = client.post(
+        "/api/auth/mfa/verify",
+        json={"mfa_token": challenge2, "code": codes[1]},
+    )
+    assert ok2.status_code == 200
+    assert len(_events("mfa_fail", user_id=uid)) == 1

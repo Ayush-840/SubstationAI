@@ -31,6 +31,9 @@ from app.core.mfa import (
     generate_recovery_code,
     generate_totp_secret,
     hash_recovery_code,
+    mfa_record_failure,
+    mfa_reset,
+    mfa_retry_after,
     otpauth_uri,
     verify_totp_code,
 )
@@ -66,6 +69,7 @@ from app.schemas import (
     LogoutRequest,
     MfaDisableIn,
     MfaEnableIn,
+    MfaVerifyIn,
     PasswordChangeIn,
     PasswordResetIn,
     RefreshRequest,
@@ -180,7 +184,7 @@ def register(request: Request, user_data: UserCreate, db: Session = Depends(get_
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login")  # shape depends on MFA: Token or {mfa_required, mfa_token}
 @limiter.limit(settings.RATE_LIMIT_LOGIN)
 def login(
     request: Request,
@@ -236,6 +240,19 @@ def login(
         raise HTTPException(status_code=403, detail="email_not_verified")
 
     record_success(ip, credentials.email)
+
+    if user.totp_enabled:
+        # Password is correct but the second factor is pending: hand out a
+        # 5-minute purpose-bound challenge instead of a session (§5.2). No
+        # refresh cookie and no login_ok event yet — the session starts at
+        # /mfa/verify.
+        mfa_token = create_access_token(
+            {"sub": str(user.id)},
+            expires_delta=timedelta(minutes=5),
+            typ="mfa",
+        )
+        return {"mfa_required": True, "mfa_token": mfa_token}
+
     refresh_raw = issue_refresh_token(
         db, user.id,
         user_agent=request.headers.get("user-agent"),
@@ -305,6 +322,9 @@ async def logout(
     user_id = None
     if raw_token:
         payload = decode_token(raw_token, verify_exp=False)  # signature still checked
+        if payload.get("typ", "access") != "access":
+            # an mfa_token must not be able to end sessions (A-08 family)
+            raise HTTPException(status_code=401, detail="Invalid token type")
         user_id = payload.get("sub")
         jti, exp = payload.get("jti"), payload.get("exp")
         if jti:
@@ -705,3 +725,67 @@ def mfa_disable(
     db.commit()
     log_event(db, "mfa_disabled", user_id=current_user.id, request=request)
     return {"ok": True}
+
+
+@router.post("/mfa/verify", response_model=Token)
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def mfa_verify(
+    payload: MfaVerifyIn,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Finish a login stopped at the second factor: exchange the 5-minute
+    ``mfa_token`` + TOTP/recovery code for the normal token pair.
+
+    The challenge is purpose-bound (typ=mfa): presenting it as an access
+    token is a 401 (A-08), and five wrong codes lock *this* challenge for
+    15 minutes with Retry-After (§6) — a fresh login starts over.
+    """
+    claims = decode_token(payload.mfa_token)
+    if claims.get("typ") != "mfa":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    try:
+        user_id = int(claims.get("sub"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid MFA token")
+    jti = claims.get("jti") or ""
+
+    wait = mfa_retry_after(jti)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Try again in {wait} seconds.",
+            headers={"Retry-After": str(wait)},
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not user.totp_enabled or not user.totp_secret_enc:
+        raise HTTPException(status_code=401, detail="Invalid MFA token")
+
+    secret = decrypt_secret(user.totp_secret_enc)
+    step = verify_totp_code(secret, payload.code, user.totp_last_timestep)
+    if step is not None:
+        user.totp_last_timestep = step
+    elif not consume_recovery_code(db, user.id, payload.code):
+        attempts = mfa_record_failure(jti)
+        log_event(
+            db, "mfa_fail", user_id=user.id, request=request,
+            detail={"attempts": attempts},
+        )
+        raise HTTPException(status_code=401, detail="Invalid code")
+
+    mfa_reset(jti)
+    db.commit()  # consumed timestep / recovery code lands with the session
+
+    ip = _client_ip(request)
+    refresh_raw = issue_refresh_token(
+        db, user.id,
+        user_agent=request.headers.get("user-agent"),
+        ip=ip,
+    )
+    set_auth_cookies(response, refresh_raw)
+    log_event(
+        db, "login_ok", user_id=user.id, request=request, detail={"mfa": True}
+    )
+    return _token_response(user, refresh_raw)

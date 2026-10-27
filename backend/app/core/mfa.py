@@ -11,6 +11,7 @@ import base64
 import hashlib
 import re
 import secrets
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -126,3 +127,54 @@ def consume_recovery_code(db: Session, user_id: int, code: str) -> bool:
     row.used_at = datetime.utcnow()
     db.flush()
     return True
+
+
+# --- per-challenge code throttle (AUTH_TRD §6: 5 wrong codes / 15 min) ------
+# Keyed by the mfa_token's jti: a fresh login (fresh jti) starts over, and
+# nothing here can lock the account itself.
+
+_mfa_fail_lock = threading.Lock()
+_mfa_fails: dict[str, int] = {}
+_mfa_locked_until: dict[str, float] = {}
+
+
+def _mfa_prune(now: float) -> None:
+    for key in [k for k, t in _mfa_locked_until.items() if t <= now]:
+        _mfa_locked_until.pop(key, None)
+        _mfa_fails.pop(key, None)
+    if len(_mfa_fails) > 10_000:  # bound memory under a spray
+        _mfa_fails.clear()
+
+
+def mfa_record_failure(token_id: str) -> int:
+    """Count one wrong MFA code; returns the new attempt total."""
+    s = get_settings()
+    now = time.time()
+    with _mfa_fail_lock:
+        _mfa_prune(now)
+        count = _mfa_fails.get(token_id, 0) + 1
+        _mfa_fails[token_id] = count
+        if count >= s.MFA_MAX_FAILURES:
+            _mfa_locked_until[token_id] = now + s.MFA_LOCK_SECONDS
+        return count
+
+
+def mfa_retry_after(token_id: str) -> int:
+    """Seconds until this challenge unlocks; 0 when it is usable."""
+    with _mfa_fail_lock:
+        until = _mfa_locked_until.get(token_id)
+        if until is None:
+            return 0
+        remaining = until - time.time()
+        if remaining <= 0:
+            _mfa_locked_until.pop(token_id, None)
+            _mfa_fails.pop(token_id, None)
+            return 0
+        return int(remaining) + 1
+
+
+def mfa_reset(token_id: str) -> None:
+    """Clear failures after a successful verification."""
+    with _mfa_fail_lock:
+        _mfa_fails.pop(token_id, None)
+        _mfa_locked_until.pop(token_id, None)

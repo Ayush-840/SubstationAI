@@ -41,7 +41,10 @@ services:
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        INSTALL_HEAVY: ${INSTALL_HEAVY:-false}
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://substation:${POSTGRES_PASSWORD:-substation}@postgres:5432/substationiq
@@ -51,9 +54,8 @@ services:
       - CHROMA_PATH=/app/data/chroma
       - FRONTEND_URL=http://localhost:5173
       - CORS_ALLOW_ORIGINS=http://localhost:5173
-      - REDIS_URL=redis://redis:6379/0
-      - RATE_LIMIT_LOGIN=5/minute
-      - RATE_LIMIT_CHAT=30/minute
+      - APP_ENV=development
+      - SEED_DEMO_USERS=true
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,20 +73,6 @@ services:
       sh -c "alembic upgrade head &&
              python -m app.scripts.seed &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
-
-  worker:
-    build: ./backend
-    env_file: .env
-    environment:
-      - DATABASE_URL=postgresql://substation:${POSTGRES_PASSWORD:-substation}@postgres:5432/substationiq
-      - MONGO_URL=mongodb://mongo:27017
-      - MONGO_DB=substationiq
-      - REDIS_URL=redis://redis:6379/0
-      - CHROMA_PATH=/app/data/chroma
-    depends_on:
-      - backend
-      - redis
-    command: arq app.worker.WorkerSettings
 
   frontend:
     build: ./frontend

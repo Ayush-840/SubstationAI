@@ -129,7 +129,19 @@ export async function restoreSession(): Promise<RefreshResult> {
 }
 
 // ── fetch with auth + one retry ──────────────────────────────────────────────
-const AUTH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh']
+// Paths that run before (or instead of) a session: a 401 here means the
+// request itself was rejected, not that the access token expired — never
+// attempt a refresh for these.
+const AUTH_PATHS = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/auth/verify-email',
+  '/api/auth/resend-verification',
+  '/api/auth/password/forgot',
+  '/api/auth/password/reset',
+  '/api/auth/mfa/verify',
+]
 
 async function authedFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
   const headers = new Headers(init.headers)
@@ -204,6 +216,40 @@ export async function logoutRemote(): Promise<void> {
   try {
     await authedFetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token }) }, false)
   } catch { /* offline: local sign-out still happens */ }
+}
+
+// ── session management (account page) ────────────────────────────────────────
+export interface SessionInfo {
+  family_id: string
+  user_agent: string | null
+  ip: string | null
+  last_used_at: string | null
+  current: boolean
+}
+
+/** List this account's sessions; the current one is flagged via the refresh token. */
+export async function listSessions(): Promise<SessionInfo[]> {
+  const refresh_token = getRefreshToken()
+  const res = await authedFetch('/api/auth/sessions', {
+    headers: refresh_token ? { 'X-Refresh-Token': refresh_token } : {},
+  })
+  if (!res.ok) throw await errorFrom(res)
+  return (await res.json()) as SessionInfo[]
+}
+
+/**
+ * End every session of this account — including the caller's (the server
+ * deny-lists the current access token too). The caller must sign out locally
+ * afterwards.
+ */
+export async function logoutAllRemote(): Promise<void> {
+  await authedFetch('/api/auth/logout-all', { method: 'POST' })
+}
+
+/** Revoke one other device's session by family id. */
+export async function revokeSessionRemote(familyId: string): Promise<void> {
+  const res = await authedFetch(`/api/auth/sessions/${encodeURIComponent(familyId)}`, { method: 'DELETE' })
+  if (!res.ok) throw await errorFrom(res)
 }
 
 export interface SSEEvent {

@@ -114,6 +114,8 @@ class UserResponse(BaseModel):
     # NULL until the verification link is clicked; lets the SPA show the
     # "check your e-mail" state and the account page show verification status.
     email_verified_at: Optional[datetime] = None
+    # Set once TOTP is enabled; the account page shows the current state.
+    totp_enabled: bool = False
 
     class Config:
         from_attributes = True

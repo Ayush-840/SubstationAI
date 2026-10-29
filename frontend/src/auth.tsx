@@ -25,6 +25,8 @@ interface AuthCtx {
   /** restoring a saved session after a page load (cold starts can take a while) */
   booting: boolean
   login: (email: string, password: string) => Promise<LoginResult>
+  /** Sign in with a Google ID token from Google Identity Services. */
+  loginWithGoogle: (idToken: string) => Promise<LoginResult>
   register: (name: string, email: string, password: string) => Promise<RegisterResult>
   /** Submit the TOTP/recovery code for the pending mfa_token. */
   completeMfa: (code: string) => Promise<void>
@@ -108,6 +110,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const loginWithGoogle = useCallback(async (idToken: string): Promise<LoginResult> => {
+    setLoading(true)
+    try {
+      const res = await api.post<LoginResponse>('/api/auth/google', { id_token: idToken })
+      if (res?.mfa_required && res.mfa_token) {
+        setSession(null)
+        setMfaToken(res.mfa_token)
+        return 'mfa'
+      }
+      setSession(res)
+      const me = await api.get<User>('/api/auth/me')
+      setStoredUser(me)
+      setUser(me)
+      return 'ok'
+    } catch (err) {
+      setSession(null)
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   const completeMfa = useCallback(
     async (code: string) => {
       if (!mfaToken) throw new Error('No code is waiting — sign in again.')
@@ -164,6 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     booting,
     login,
+    loginWithGoogle,
     register,
     completeMfa,
     mfaPending: mfaToken !== null,

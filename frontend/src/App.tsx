@@ -6,6 +6,10 @@ import { Logo, Disclaimer, Wordmark } from './components/common'
 import { SourcesPanel } from './components/Sources'
 import type { CitationItem } from './components/Citation'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
+import VerifyEmail from './pages/VerifyEmail'
+import Account from './pages/Account'
 import Chat from './pages/Chat'
 import Procedures from './pages/Procedures'
 import Diagnosis from './pages/Diagnosis'
@@ -19,7 +23,7 @@ import Catalog from './pages/Catalog'
 import TestDetail from './pages/TestDetail'
 import CatalogEditor from './pages/CatalogEditor'
 
-type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'catalog' | 'dev-components' | 'catalog-editor'
+type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'catalog' | 'dev-components' | 'catalog-editor' | 'account'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'chat', label: 'Ask' },
@@ -31,6 +35,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'result-checker', label: 'Result Checker' },
   { id: 'catalog', label: 'Catalog' },
   { id: 'catalog-editor', label: 'Catalog Editor' },
+  { id: 'account', label: 'Account' },
 ]
 
 // Each tab is a real route, so the URL, back button and refresh all work.
@@ -46,6 +51,7 @@ const TAB_PATHS: Record<Tab, string> = {
   catalog: '/catalog',
   'catalog-editor': '/catalog/editor',
   'dev-components': '/dev/components',
+  account: '/account',
 }
 
 /** Longest matching path wins, so /catalog/editor is not mistaken for /catalog. */
@@ -112,6 +118,8 @@ function Shell() {
   const roleLabel = ROLE_LABELS[user.role] ?? user.role
 
   const mobileTabs = tabs.slice(0, 4)
+  // Account must stay reachable on phones even when the first four tabs fill the bar.
+  if (tabs.includes('account') && !mobileTabs.includes('account')) mobileTabs.push('account')
 
   // A trainee typing /dga or /admin gets sent home instead of seeing a page the API will refuse.
   if (!isDev && !tabs.includes(tab)) return <Navigate to="/chat" replace />
@@ -335,6 +343,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
       <Route element={<PrivateRoute><Shell /></PrivateRoute>}>
         <Route index element={<Navigate to="/chat" replace />} />
         <Route path="chat" element={<Chat />} />
@@ -348,6 +359,7 @@ export default function App() {
         <Route path="result-checker" element={<ResultChecker />} />
         <Route path="admin" element={<Admin />} />
         <Route path="catalog/editor" element={<CatalogEditor />} />
+        <Route path="account" element={<Account />} />
         <Route path="dev/components" element={<DevComponents />} />
       </Route>
     </Routes>

@@ -223,7 +223,9 @@ export interface SessionInfo {
   family_id: string
   user_agent: string | null
   ip: string | null
+  created_at: string
   last_used_at: string | null
+  active: boolean
   current: boolean
 }
 
@@ -234,7 +236,8 @@ export async function listSessions(): Promise<SessionInfo[]> {
     headers: refresh_token ? { 'X-Refresh-Token': refresh_token } : {},
   })
   if (!res.ok) throw await errorFrom(res)
-  return (await res.json()) as SessionInfo[]
+  const body = (await res.json()) as { sessions: SessionInfo[] }
+  return body.sessions ?? []
 }
 
 /**

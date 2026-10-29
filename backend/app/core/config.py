@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     CORS_ALLOW_ORIGIN_REGEX: str = ""
     CORS_ALLOW_ORIGINS: str = ""
 
+    # Google Sign-In: OAuth client id from Google Cloud Console. Empty disables
+    # the /api/auth/google endpoint (501) and hides the button in the SPA.
+    GOOGLE_CLIENT_ID: str = ""
+
     # Rate limits (slowapi syntax). Login/register are per client IP; the
     # failed-login throttle below is per (IP, email).
     RATE_LIMIT_LOGIN: str = "30/minute"

@@ -12,8 +12,11 @@ Behaviour is specified in AUTH_TRD.md; the short version:
 """
 
 from datetime import datetime, timedelta
+import secrets
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -66,6 +69,7 @@ from app.db.models import OneTimeToken, RecoveryCode, RefreshToken, User, UserRo
 from app.db.session import get_db
 from app.schemas import (
     ForgotPasswordIn,
+    GoogleLoginIn,
     LogoutRequest,
     MfaDisableIn,
     MfaEnableIn,
@@ -260,6 +264,90 @@ def login(
     )
     set_auth_cookies(response, refresh_raw)
     log_event(db, "login_ok", user_id=user.id, request=request)
+    return _token_response(user, refresh_raw)
+
+
+@router.post("/google")  # shape depends on MFA: Token or {mfa_required, mfa_token}
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def login_with_google(
+    request: Request,
+    payload: GoogleLoginIn,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Sign in — or auto-register — with a Google ID token issued by Google
+    Identity Services. Google has already confirmed the address, so new
+    accounts are created email-verified; an existing password account keeps
+    its password and simply gains a Google sign-in path. TOTP still applies
+    when the account has it enabled (the second factor is never skipped)."""
+    if not settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=501, detail="Google sign-in is not configured")
+
+    try:
+        info = google_id_token.verify_oauth2_token(
+            payload.id_token, GoogleRequest(), settings.GOOGLE_CLIENT_ID
+        )
+    except Exception:
+        # Expired, tampered, wrong audience, wrong issuer: one uniform answer.
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    email = str(info.get("email") or "").strip().lower()
+    if not email or info.get("email_verified") is not True:
+        # An unverified Google address must never become an account here.
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    created = False
+    if user is None:
+        name = str(info.get("name") or "").strip() or email.split("@")[0]
+        user = User(
+            name=name,
+            email=email,
+            # No usable password: sign-in is Google-only until the user sets
+            # one on the account page (the column is NOT NULL).
+            password_hash=get_password_hash(secrets.token_urlsafe(32)),
+            role=UserRole.TRAINEE,  # public sign-up can never choose a role
+            email_verified_at=datetime.utcnow(),
+        )
+        db.add(user)
+        try:
+            db.commit()
+        except IntegrityError:  # two devices finishing Google sign-up at once
+            db.rollback()
+            user = (
+                db.query(User)
+                .filter(func.lower(User.email) == email)
+                .order_by(User.id)
+                .first()
+            )
+        else:
+            db.refresh(user)
+            created = True
+            log_event(
+                db, "register", user_id=user.id, request=request,
+                detail={"email": email, "provider": "google"},
+            )
+
+    if user.totp_enabled:
+        mfa_token = create_access_token(
+            {"sub": str(user.id)},
+            expires_delta=timedelta(minutes=5),
+            typ="mfa",
+        )
+        return {"mfa_required": True, "mfa_token": mfa_token}
+
+    ip = _client_ip(request)
+    record_success(ip, email)
+    refresh_raw = issue_refresh_token(
+        db, user.id,
+        user_agent=request.headers.get("user-agent"),
+        ip=ip,
+    )
+    set_auth_cookies(response, refresh_raw)
+    log_event(
+        db, "login_ok", user_id=user.id, request=request,
+        detail={"provider": "google", "created": created},
+    )
     return _token_response(user, refresh_raw)
 
 

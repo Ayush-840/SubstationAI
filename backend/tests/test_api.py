@@ -2343,3 +2343,138 @@ def test_mfa_verify_accepts_recovery_code_once(client):
     )
     assert ok2.status_code == 200
     assert len(_events("mfa_fail", user_id=uid)) == 1
+
+
+# ── Google Sign-In ────────────────────────────────────────────────────────────
+
+_TEST_GOOGLE_CLIENT_ID = "test-client.apps.googleusercontent.com"
+
+
+def _patch_google(monkeypatch, payload: dict | None = None, exc: Exception | None = None):
+    """Point the endpoint at a fake ID-token verifier."""
+    import app.api.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod.settings, "GOOGLE_CLIENT_ID", _TEST_GOOGLE_CLIENT_ID)
+
+    def fake_verify(token, request, client_id):
+        assert client_id == _TEST_GOOGLE_CLIENT_ID
+        if exc is not None:
+            raise exc
+        return payload or {}
+
+    monkeypatch.setattr(auth_mod.google_id_token, "verify_oauth2_token", fake_verify)
+
+
+def test_google_disabled_returns_501(client, monkeypatch):
+    import app.api.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod.settings, "GOOGLE_CLIENT_ID", "")
+    r = client.post("/api/auth/google", json={"id_token": "x" * 40})
+    assert r.status_code == 501
+
+
+def test_google_invalid_token_is_uniform_401(client, monkeypatch):
+    _patch_google(monkeypatch, exc=ValueError("bad token"))
+    r = client.post("/api/auth/google", json={"id_token": "x" * 40})
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Invalid Google token"
+
+
+def test_google_unverified_address_is_rejected(client, monkeypatch):
+    _patch_google(
+        monkeypatch,
+        payload={"email": "unverified@test.dev", "email_verified": False},
+    )
+    r = client.post("/api/auth/google", json={"id_token": "x" * 40})
+    assert r.status_code == 401
+
+
+def test_google_signup_creates_verified_trainee(client, monkeypatch):
+    email = "goog-new@test.dev"
+    _patch_google(
+        monkeypatch,
+        payload={"email": email, "email_verified": True, "name": "Goog New"},
+    )
+    r = client.post("/api/auth/google", json={"id_token": "x" * 40})
+    assert r.status_code == 200, r.text
+    tokens = r.json()
+    assert tokens["access_token"] and tokens["refresh_token"]
+
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    assert me.status_code == 200
+    body = me.json()
+    assert body["email"] == email
+    assert body["name"] == "Goog New"
+    assert body["role"] == "trainee"
+    assert body["email_verified_at"] is not None  # Google already confirmed it
+    assert body["totp_enabled"] is False
+
+    # An audit trail exists and never contains the token.
+    uid = _uid(email)
+    assert len(_events("register", user_id=uid)) == 1
+    assert (_events("register", user_id=uid)[0].detail or {}).get("provider") == "google"
+    assert len(_events("login_ok", user_id=uid)) == 1
+
+    # The account has no usable password: password login must fail.
+    bad = client.post(
+        "/api/auth/login", json={"email": email, "password": "pass1234"}
+    )
+    assert bad.status_code == 401
+
+
+def test_google_existing_password_user_signs_in(client, monkeypatch):
+    email = "goog-existing@test.dev"
+    uid = _register_uid(client, email)
+    _patch_google(
+        monkeypatch, payload={"email": email.upper(), "email_verified": True}
+    )
+    r = client.post("/api/auth/google", json={"id_token": "x" * 40})
+    assert r.status_code == 200
+    tokens = r.json()
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    assert me.status_code == 200 and me.json()["id"] == uid
+
+    # No second account, and the original password still works.
+    assert _events("register", user_id=uid) and len(_events("login_ok", user_id=uid)) == 1
+    assert (
+        client.post(
+            "/api/auth/login", json={"email": email, "password": "pass1234"}
+        ).status_code
+        == 200
+    )
+    assert len(_events("login_ok", user_id=uid)) == 2  # google + password
+
+
+def test_google_signin_still_requires_totp_when_enabled(client, monkeypatch):
+    import time as _time
+
+    import app.core.mfa as mfa_mod
+    import pyotp
+
+    email = "goog-mfa@test.dev"
+    uid = _register_uid(client, email)
+    _auth, secret, _codes = _enable_mfa(client, email)
+    _patch_google(monkeypatch, payload={"email": email, "email_verified": True})
+
+    r = client.post("/api/auth/google", json={"id_token": "x" * 40})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mfa_required"] is True and "access_token" not in body
+
+    class _ShiftedClock:
+        def time(self):
+            return _time.time() + 31
+
+    monkeypatch.setattr(mfa_mod, "time", _ShiftedClock())
+    step = int((_time.time() + 31) // 30)
+    code = pyotp.TOTP(secret).at(step * 30)
+    ok = client.post(
+        "/api/auth/mfa/verify", json={"mfa_token": body["mfa_token"], "code": code}
+    )
+    assert ok.status_code == 200
+    assert ok.json()["access_token"]
+    assert (_events("login_ok", user_id=uid)[-1].detail or {}).get("mfa") is True

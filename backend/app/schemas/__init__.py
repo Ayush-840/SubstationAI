@@ -105,6 +105,13 @@ class UserLogin(BaseModel):
         return _norm_email(v)
 
 
+class GoogleLoginIn(BaseModel):
+    """POST /api/auth/google — the JWT `credential` from Google Identity
+    Services, verified server-side against GOOGLE_CLIENT_ID."""
+
+    id_token: str = Field(min_length=20, max_length=8192)
+
+
 class UserResponse(BaseModel):
     id: int
     name: str

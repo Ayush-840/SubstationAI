@@ -41,6 +41,15 @@ services:
         value: 30/hour
       - key: RATE_LIMIT_CHAT
         value: 30/minute
+      # Fernet key for at-rest TOTP secrets — generate once with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      # Production refuses to start without it (AUTH_TRD Day 7).
+      - key: TOTP_ENCRYPTION_KEY
+        sync: false
+      # Google Sign-In (optional): OAuth client id from Google Cloud Console.
+      # The public id also goes to Vercel as VITE_GOOGLE_CLIENT_ID.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
 
       # --- CORS: set these to YOUR Vercel URLs ---
       - key: FRONTEND_URL

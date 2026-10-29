@@ -3,6 +3,10 @@ export interface User {
   name: string
   email: string
   role: 'trainee' | 'engineer' | 'admin'
+  /** ISO timestamp once the address is confirmed; null when pending. */
+  email_verified_at?: string | null
+  /** true once TOTP two-factor is enabled on the account. */
+  totp_enabled?: boolean
 }
 
 export interface EquipmentClass {

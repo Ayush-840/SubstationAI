@@ -1,7 +1,10 @@
-import { FormEvent, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { FormEvent, useEffect, useRef, useState } from 'react'
+import { Navigate, Link } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { ApiError, api } from '../api/client'
+import { googleEnabled, renderGoogleButton } from '../api/google'
 import { Wordmark, Disclaimer, AllEquipmentGlyph, Field, Input, Button } from '../components/common'
+import { PasswordChecklist, firstPasswordProblem } from '../components/PasswordChecklist'
 import { copy } from '../copy'
 
 const DEMO_ACCOUNTS = {
@@ -12,15 +15,6 @@ const DEMO_ACCOUNTS = {
 
 // Demo credentials are shown only in local dev or when explicitly enabled at build time.
 const isDemoMode = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
-
-/** Same rules as the backend (schemas.UserCreate) so users get feedback before a round trip. */
-function validateRegistration(name: string, password: string): string | null {
-  if (!name.trim()) return 'Please enter your name.'
-  if (password.length < 8) return 'Password must be at least 8 characters.'
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'Password must contain at least one letter and one number.'
-  if (new TextEncoder().encode(password).length > 72) return 'Password is too long (72 bytes maximum).'
-  return null
-}
 
 const linkButton: React.CSSProperties = {
   color: 'var(--primary)',
@@ -33,36 +27,131 @@ const linkButton: React.CSSProperties = {
   marginLeft: '6px',
 }
 
+type Mode = 'login' | 'register' | 'verify-sent'
+
 export default function Login() {
-  const { user, login, register, loading } = useAuth()
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const { user, login, loginWithGoogle, register, completeMfa, cancelMfa, mfaPending, loading } = useAuth()
+  const [mode, setMode] = useState<Mode>('login')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  // Live countdown (seconds) after a 429; 0 = not locked.
+  const [lockSeconds, setLockSeconds] = useState(0)
+  // MFA step: which kind of code the user is typing.
+  const [mfaCode, setMfaCode] = useState('')
+  const [useRecovery, setUseRecovery] = useState(false)
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const googleBtnRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (lockSeconds <= 0) return
+    const t = setTimeout(() => setLockSeconds((s) => Math.max(0, s - 1)), 1000)
+    return () => clearTimeout(t)
+  }, [lockSeconds])
 
   // Already signed in (e.g. opened /login in a second tab): go to the app.
   if (user) return <Navigate to="/chat" replace />
 
   const isLogin = mode === 'login'
+  const showMfa = mfaPending
   const t = copy.pages.login
+
+  const noteError = (err: unknown) => {
+    if (err instanceof ApiError && err.status === 429 && err.retryAfter) {
+      setLockSeconds(err.retryAfter)
+      setError(`Too many attempts — try again in ${err.retryAfter} seconds.`)
+      return
+    }
+    if (err instanceof ApiError && err.status === 403 && err.message === 'email_not_verified') {
+      setError('Confirm your e-mail address to sign in. Check your inbox for the link.')
+      return
+    }
+    setError(err instanceof Error && err.message ? err.message : copy.pages.errors.authFailed)
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (loading) return
+    if (loading || lockSeconds > 0) return
     setError('')
     if (!email.trim() || !password) return setError('Enter your email and password.')
     if (!isLogin) {
-      const problem = validateRegistration(name, password)
+      if (!name.trim()) return setError('Please enter your name.')
+      const problem = firstPasswordProblem(password)
       if (problem) return setError(problem)
     }
     try {
-      if (isLogin) await login(email.trim(), password)
-      else await register(name.trim(), email.trim(), password)
+      if (isLogin) {
+        const result = await login(email.trim(), password)
+        if (result === 'mfa') {
+          setMfaCode('')
+          setUseRecovery(false)
+        }
+      } else {
+        const result = await register(name.trim(), email.trim(), password)
+        if (result === 'verify') setMode('verify-sent')
+        if (result === 'mfa') {
+          setMfaCode('')
+          setUseRecovery(false)
+        }
+      }
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : copy.pages.errors.authFailed)
+      noteError(err)
     }
   }
+
+  const submitMfa = async (e: FormEvent) => {
+    e.preventDefault()
+    if (loading) return
+    setError('')
+    const code = mfaCode.trim()
+    if (!code) return setError(useRecovery ? 'Enter a recovery code.' : 'Enter the 6-digit code from your authenticator app.')
+    try {
+      await completeMfa(code)
+    } catch (err) {
+      noteError(err)
+    }
+  }
+
+  const backFromMfa = () => {
+    cancelMfa()
+    setMfaCode('')
+    setUseRecovery(false)
+    setError('')
+  }
+
+  const resendVerification = async () => {
+    if (resendState !== 'idle') return
+    setResendState('sending')
+    try {
+      await api.post('/api/auth/resend-verification', { email: email.trim() })
+      setResendState('sent')
+    } catch {
+      // The endpoint always answers 202; only a network failure lands here.
+      setResendState('idle')
+    }
+  }
+
+  const handleGoogle = async (idToken: string) => {
+    setError('')
+    try {
+      await loginWithGoogle(idToken)
+    } catch (err) {
+      noteError(err)
+    }
+  }
+
+  // Google button lives in the login/register form only (not MFA / verify).
+  useEffect(() => {
+    if (!googleEnabled || showMfa || mode === 'verify-sent') return
+    const el = googleBtnRef.current
+    if (!el) return
+    el.innerHTML = ''
+    renderGoogleButton(el, (idToken) => { void handleGoogle(idToken) }, { width: 340 }).catch(() => {
+      /* offline or blocked: password form still works */
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, showMfa])
 
   const switchMode = () => {
     setMode(isLogin ? 'register' : 'login')
@@ -111,7 +200,7 @@ export default function Login() {
             <AllEquipmentGlyph size={48} />
           </div>
 
-          {isDemoMode && (
+          {isDemoMode && !showMfa && mode !== 'verify-sent' && (
             <div
               style={{
                 marginTop: 24,
@@ -173,75 +262,183 @@ export default function Login() {
             borderLeft: '1px solid var(--rule)',
           }}
         >
-          <form onSubmit={submit} noValidate style={{ width: '100%', maxWidth: 400, margin: '0 auto' }} aria-busy={loading}>
-            <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 600, fontFamily: 'var(--font-display)' }}>
-              {isLogin ? t.heading.login : t.heading.register}
-            </h1>
-            <p style={{ margin: '0 0 24px', fontSize: 15, color: 'var(--muted)' }}>
-              {isLogin ? t.description.login : t.description.register}
-            </p>
+          {/* ── Second factor ───────────────────────────────────────────── */}
+          {showMfa ? (
+            <form onSubmit={submitMfa} noValidate style={{ width: '100%', maxWidth: 400, margin: '0 auto' }} aria-busy={loading}>
+              <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 600, fontFamily: 'var(--font-display)' }}>
+                Two-factor check
+              </h1>
+              <p style={{ margin: '0 0 24px', fontSize: 15, color: 'var(--muted)' }}>
+                {useRecovery
+                  ? 'Enter one of the recovery codes you saved when you turned on two-factor.'
+                  : 'Enter the 6-digit code from your authenticator app.'}
+              </p>
 
-            {!isLogin && (
-              <Field label={t.fields.name} htmlFor="auth-name" required>
+              <Field label={useRecovery ? 'Recovery code' : 'Authentication code'} htmlFor="auth-mfa" required>
                 <Input
-                  id="auth-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={100}
-                  autoComplete="name"
+                  id="auth-mfa"
+                  type="text"
+                  inputMode={useRecovery ? 'text' : 'numeric'}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  maxLength={32}
+                  style={{ fontFamily: 'var(--font-data)', letterSpacing: useRecovery ? 'normal' : '0.15em' }}
                 />
               </Field>
-            )}
 
-            <Field label={t.fields.email} htmlFor="auth-email" required>
-              <Input
-                id="auth-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                autoCapitalize="none"
-                spellCheck={false}
-              />
-            </Field>
+              {error && (
+                <p style={{ margin: '0 0 12px', color: 'var(--danger)', fontSize: 14 }} role="alert">
+                  {error}
+                </p>
+              )}
 
-            <Field
-              label={t.fields.password}
-              htmlFor="auth-password"
-              required
-              hint={isLogin ? undefined : 'At least 8 characters, with a letter and a number.'}
-            >
-              <Input
-                id="auth-password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete={isLogin ? 'current-password' : 'new-password'}
-              />
-            </Field>
+              <Button variant="primary" type="submit" style={{ width: '100%' }} disabled={loading}>
+                {loading ? 'Verifying…' : 'Verify'}
+              </Button>
 
-            {error && (
-              <p style={{ margin: '0 0 12px', color: 'var(--danger)', fontSize: 14 }} role="alert">
-                {error}
+              <p style={{ marginTop: 16, textAlign: 'center', fontSize: 14, color: 'var(--muted)' }}>
+                <button type="button" onClick={() => { setUseRecovery(!useRecovery); setMfaCode(''); setError('') }} style={linkButton}>
+                  {useRecovery ? 'Use an authenticator code instead' : 'Use a recovery code instead'}
+                </button>
               </p>
-            )}
-
-            <Button variant="primary" type="submit" style={{ width: '100%' }} disabled={loading}>
-              {loading ? t.submit.loading : isLogin ? t.submit.login : t.submit.register}
-            </Button>
-            {loading && (
-              <p style={{ margin: '12px 0 0', fontSize: 13, color: 'var(--muted)', textAlign: 'center' }} role="status">
-                The server may be waking up — this can take up to a minute on the first request.
+              <p style={{ marginTop: 8, textAlign: 'center', fontSize: 14 }}>
+                <button type="button" onClick={backFromMfa} style={linkButton}>
+                  ← Back to sign in
+                </button>
               </p>
-            )}
+            </form>
+          ) : mode === 'verify-sent' ? (
+            /* ── Check-your-e-mail screen (register with verification required) ── */
+            <div style={{ width: '100%', maxWidth: 400, margin: '0 auto' }}>
+              <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 600, fontFamily: 'var(--font-display)' }}>
+                Check your e-mail
+              </h1>
+              <p style={{ margin: '0 0 16px', fontSize: 15, color: 'var(--muted)' }}>
+                We sent a confirmation link to <strong style={{ color: 'var(--ink)' }}>{email.trim()}</strong>.
+                Click it to activate your account, then sign in.
+              </p>
+              <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--muted)' }}>
+                The link works once and expires after a short time — request a new one if it ran out.
+              </p>
+              {resendState === 'sent' ? (
+                <p style={{ margin: '0 0 16px', fontSize: 14, color: 'var(--success, #15803d)' }} role="status">
+                  Sent. Check your inbox (and spam folder).
+                </p>
+              ) : (
+                <Button variant="secondary" style={{ width: '100%', marginBottom: 12 }} disabled={resendState === 'sending'} onClick={resendVerification}>
+                  {resendState === 'sending' ? 'Sending…' : 'Send a new link'}
+                </Button>
+              )}
+              <p style={{ textAlign: 'center', fontSize: 14, color: 'var(--muted)' }}>
+                Wrong address?
+                <button type="button" onClick={() => { setMode('register'); setResendState('idle'); setError('') }} style={linkButton}>
+                  Register again
+                </button>
+              </p>
+            </div>
+          ) : (
+            /* ── Login / register ──────────────────────────────────────── */
+            <form onSubmit={submit} noValidate style={{ width: '100%', maxWidth: 400, margin: '0 auto' }} aria-busy={loading}>
+              <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 600, fontFamily: 'var(--font-display)' }}>
+                {isLogin ? t.heading.login : t.heading.register}
+              </h1>
+              <p style={{ margin: '0 0 24px', fontSize: 15, color: 'var(--muted)' }}>
+                {isLogin ? t.description.login : t.description.register}
+              </p>
 
-            <p style={{ marginTop: 16, textAlign: 'center', fontSize: 14, color: 'var(--muted)' }}>
-              {isLogin ? "Don't have an account?" : 'Already registered?'}
-              <button type="button" onClick={switchMode} style={linkButton}>
-                {isLogin ? 'Register' : 'Sign in'}
-              </button>
-            </p>
-          </form>
+              {!isLogin && (
+                <Field label={t.fields.name} htmlFor="auth-name" required>
+                  <Input
+                    id="auth-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={100}
+                    autoComplete="name"
+                  />
+                </Field>
+              )}
+
+              <Field label={t.fields.email} htmlFor="auth-email" required>
+                <Input
+                  id="auth-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field
+                label={t.fields.password}
+                htmlFor="auth-password"
+                required
+              >
+                <Input
+                  id="auth-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete={isLogin ? 'current-password' : 'new-password'}
+                />
+              </Field>
+
+              {!isLogin && password.length > 0 && <PasswordChecklist password={password} />}
+
+              {isLogin && (
+                <p style={{ margin: '-4px 0 16px', textAlign: 'right', fontSize: 13 }}>
+                  <Link to="/forgot-password" style={{ color: 'var(--primary)' }}>Forgot password?</Link>
+                </p>
+              )}
+
+              {error && (
+                <p style={{ margin: '0 0 12px', color: 'var(--danger)', fontSize: 14 }} role="alert">
+                  {error}
+                  {error.includes('Confirm your e-mail') && resendState !== 'sent' && (
+                    <button type="button" onClick={resendVerification} style={linkButton} disabled={resendState === 'sending'}>
+                      {resendState === 'sending' ? 'Sending…' : 'Send a new link'}
+                    </button>
+                  )}
+                </p>
+              )}
+
+              <Button variant="primary" type="submit" style={{ width: '100%' }} disabled={loading || lockSeconds > 0}>
+                {lockSeconds > 0
+                  ? `Locked — retry in ${lockSeconds}s`
+                  : loading
+                    ? t.submit.loading
+                    : isLogin
+                      ? t.submit.login
+                      : t.submit.register}
+              </Button>
+              {loading && (
+                <p style={{ margin: '12px 0 0', fontSize: 13, color: 'var(--muted)', textAlign: 'center' }} role="status">
+                  The server may be waking up — this can take up to a minute on the first request.
+                </p>
+              )}
+
+              {isLogin && googleEnabled && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 12px', color: 'var(--muted)', fontSize: 12 }}>
+                    <span style={{ flex: 1, height: 1, background: 'var(--rule)' }} />
+                    or
+                    <span style={{ flex: 1, height: 1, background: 'var(--rule)' }} />
+                  </div>
+                  <div ref={googleBtnRef} style={{ display: 'flex', justifyContent: 'center' }} />
+                </>
+              )}
+
+              <p style={{ marginTop: 16, textAlign: 'center', fontSize: 14, color: 'var(--muted)' }}>
+                {isLogin ? "Don't have an account?" : 'Already registered?'}
+                <button type="button" onClick={switchMode} style={linkButton}>
+                  {isLogin ? 'Register' : 'Sign in'}
+                </button>
+              </p>
+            </form>
+          )}
         </section>
       </main>
 

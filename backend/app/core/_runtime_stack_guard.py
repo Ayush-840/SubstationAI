@@ -36,6 +36,7 @@ def check_runtime_stack() -> None:
     _required("argon2", "password hashing (argon2id)")
     _required("pyotp", "TOTP two-factor authentication")
     _required("cryptography", "Fernet encryption for TOTP secrets")
+    _required("google.oauth2.id_token", "Google Sign-In token verification")
 
     if _missing:
         lines = ["Missing runtime dependency(ies):"]

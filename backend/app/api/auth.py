@@ -237,6 +237,11 @@ def login(
         user.password_hash = get_password_hash(credentials.password)
         db.commit()
 
+    if user.is_active is False:
+        # Day 10: the password was right but the account is disabled — the
+        # only user who can tell the difference is one who knows the password.
+        raise HTTPException(status_code=403, detail="Account disabled")
+
     if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
         # A-02: credentials are correct but the address was never confirmed
         # (§5.2). No login_fail is recorded — the password was right, so this
@@ -328,6 +333,10 @@ def login_with_google(
                 detail={"email": email, "provider": "google"},
             )
 
+    if user.is_active is False:
+        # Day 10: disabled accounts cannot sign in through Google either.
+        raise HTTPException(status_code=403, detail="Account disabled")
+
     if user.totp_enabled:
         mfa_token = create_access_token(
             {"sub": str(user.id)},
@@ -378,6 +387,10 @@ def refresh(
     user = db.query(User).filter(User.id == row.user_id).first()
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.is_active is False:
+        # Day 10: a disabled account cannot mint a new session from an old
+        # refresh token either (401 so the SPA signs out cleanly).
+        raise HTTPException(status_code=401, detail="Account disabled")
     if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
         # §6: a refresh token cannot resurrect an unverified session.
         raise HTTPException(status_code=401, detail="Email not verified")

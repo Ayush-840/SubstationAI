@@ -58,6 +58,9 @@ class User(Base):
     totp_secret_enc = Column(Text, nullable=True)
     totp_enabled = Column(Boolean, default=False, nullable=True)
     totp_last_timestep = Column(Integer, nullable=True)
+    # AUTH_TRD §4 / Day 10: admin can disable an account; a disabled account
+    # can neither log in nor use an existing token (checked per request).
+    is_active = Column(Boolean, default=True, nullable=True)
 
     conversations = relationship("Conversation", back_populates="user")
     feedback = relationship("Feedback", back_populates="user")

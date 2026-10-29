@@ -7,7 +7,6 @@ import {
   Field,
   Input,
   Select,
-  Dialog,
   Wordmark,
   StatusText,
 } from '../components/common'
@@ -41,9 +40,23 @@ interface AdminUser {
   name: string
   email: string
   role: 'trainee' | 'engineer' | 'admin'
+  is_active: boolean
+  email_verified_at: string | null
+  totp_enabled: boolean
+  created_at: string
 }
 
-type AdminTab = 'documents' | 'verification' | 'analytics' | 'evaluation' | 'users'
+interface AuthEventRow {
+  id: number
+  user_id: number | null
+  event: string
+  ip: string | null
+  user_agent: string | null
+  detail: Record<string, unknown>
+  created_at: string
+}
+
+type AdminTab = 'documents' | 'verification' | 'analytics' | 'evaluation' | 'users' | 'audit'
 
 export default function Admin() {
   const [tab, setTab] = useState<AdminTab>('documents')
@@ -61,12 +74,12 @@ export default function Admin() {
           Admin
         </h1>
         <p style={{ margin: 0, color: 'var(--muted)', fontSize: '15px' }}>
-          Manage documents, verification queue, analytics, evaluation, and users.
+          Manage documents, verification queue, analytics, evaluation, users and the audit trail.
         </p>
       </header>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '24px', borderBottom: '1px solid var(--rule)', paddingBottom: '12px' }}>
-        {(['documents', 'verification', 'analytics', 'evaluation', 'users'] as AdminTab[]).map((t) => (
+        {(['documents', 'verification', 'analytics', 'evaluation', 'users', 'audit'] as AdminTab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -93,6 +106,7 @@ export default function Admin() {
       {tab === 'analytics' && <AnalyticsView />}
       {tab === 'evaluation' && <EvaluationView />}
       {tab === 'users' && <UsersView />}
+      {tab === 'audit' && <AuditView />}
     </div>
   )
 }
@@ -549,23 +563,27 @@ function EvaluationView() {
 function UsersView() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
-  const [dialogUser, setDialogUser] = useState<AdminUser | null>(null)
-  const [dialogRole, setDialogRole] = useState<'trainee' | 'engineer' | 'admin'>('trainee')
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState<number | null>(null)
 
   useEffect(() => {
-    api.get<AdminUser[]>('/api/admin/users').then(setUsers).catch(() => {}).finally(() => setLoading(false))
+    api.get<AdminUser[]>('/api/admin/users').then(setUsers).catch((e) => setError(e.message)).finally(() => setLoading(false))
   }, [])
 
-  const openRoleDialog = (user: AdminUser) => {
-    setDialogUser(user)
-    setDialogRole(user.role)
-  }
-
-  const saveRole = async () => {
-    if (!dialogUser) return
-    await api.patch(`/api/admin/users/${dialogUser.id}`, { role: dialogRole })
-    setUsers(users.map(u => u.id === dialogUser.id ? { ...u, role: dialogRole } : u))
-    setDialogUser(null)
+  const patch = async (u: AdminUser, body: { role?: AdminUser['role']; is_active?: boolean }) => {
+    setBusyId(u.id)
+    setError('')
+    try {
+      const updated = await api.patch<AdminUser>(`/api/admin/users/${u.id}`, body)
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? updated : x)))
+    } catch (e: any) {
+      // 409 = last admin; the table reloads so the true state is visible.
+      setError(e.message)
+      const fresh = await api.get<AdminUser[]>('/api/admin/users').catch(() => null)
+      if (fresh) setUsers(fresh)
+    } finally {
+      setBusyId(null)
+    }
   }
 
   if (loading) return <p style={{ padding: '32px', textAlign: 'center', color: 'var(--muted)' }}>Loading users…</p>
@@ -573,11 +591,12 @@ function UsersView() {
   return (
     <div>
       <SectionLabel topRule={false}>Users</SectionLabel>
+      {error && <p style={{ color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-ui)' }}>
           <thead>
             <tr style={{ background: 'var(--surface-sunken)', borderBottom: '2px solid var(--rule-strong)' }}>
-              {['Name', 'Email', 'Role', ''].map((col) => (
+              {['Name', 'Email', 'Role', 'MFA', 'Status', ''].map((col) => (
                 <th key={col} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '12px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
                   {col}
                 </th>
@@ -590,52 +609,130 @@ function UsersView() {
                 <td style={{ padding: '12px 14px', fontWeight: 500, color: 'var(--ink)' }}>{u.name}</td>
                 <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--muted)' }}>{u.email}</td>
                 <td style={{ padding: '12px 14px' }}>
-                  <select
+                  <Select
                     value={u.role}
-                    onChange={(e) => { openRoleDialog(u); setDialogRole(e.target.value as 'trainee' | 'engineer' | 'admin') }}
-                    style={{
-                      padding: '6px 10px',
-                      border: '1px solid var(--rule)',
-                      borderRadius: 'var(--radius-sm)',
-                      background: 'var(--surface)',
-                      color: 'var(--ink)',
-                      fontSize: '13px',
-                      fontFamily: 'var(--font-ui)',
-                      cursor: 'pointer',
-                    }}
+                    disabled={busyId === u.id}
+                    onChange={(e) => patch(u, { role: e.target.value as AdminUser['role'] })}
                   >
                     <option value="trainee">Trainee</option>
                     <option value="engineer">Engineer</option>
                     <option value="admin">Admin</option>
-                  </select>
+                  </Select>
+                </td>
+                <td style={{ padding: '12px 14px', fontSize: '13px', color: u.totp_enabled ? 'var(--success)' : 'var(--muted)' }}>
+                  {u.totp_enabled ? 'On' : 'Off'}
+                </td>
+                <td style={{ padding: '12px 14px' }}>
+                  <span style={{
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    color: u.is_active ? 'var(--success)' : 'var(--danger)',
+                  }}>
+                    {u.is_active ? 'Active' : 'Disabled'}
+                  </span>
                 </td>
                 <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                  <Button variant="tertiary" size="small" onClick={() => openRoleDialog(u)}>Change</Button>
+                  <Button
+                    variant={u.is_active ? 'tertiary' : 'secondary'}
+                    size="small"
+                    disabled={busyId === u.id}
+                    onClick={() => patch(u, { is_active: !u.is_active })}
+                  >
+                    {busyId === u.id ? '…' : u.is_active ? 'Disable' : 'Enable'}
+                  </Button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <p style={{ margin: '12px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+        A disabled account cannot sign in and its existing sessions stop working on the next request.
+        The last admin cannot be demoted or disabled — recover a lock-out with
+        {' '}<code style={{ fontFamily: 'var(--font-data)' }}>python -m app.scripts.make_admin &lt;email&gt;</code> on the server.
+      </p>
+    </div>
+  )
+}
 
-      <Dialog
-        isOpen={!!dialogUser}
-        title="Change User Role"
-        description={dialogUser ? `Change role for ${dialogUser.name} (${dialogUser.email})` : ''}
-        onClose={() => setDialogUser(null)}
-        onConfirm={saveRole}
-        confirmLabel="Save"
-        confirmVariant="primary"
-        cancelLabel="Cancel"
-      >
-        <Field label="Role" required>
-          <Select defaultValue={dialogRole} onChange={(e) => setDialogRole(e.target.value as 'trainee' | 'engineer' | 'admin')}>
-            <option value="trainee">Trainee</option>
-            <option value="engineer">Engineer</option>
-            <option value="admin">Admin</option>
-          </Select>
+function AuditView() {
+  const [events, setEvents] = useState<AuthEventRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [userFilter, setUserFilter] = useState('')
+  const [eventFilter, setEventFilter] = useState('')
+
+  const load = (uid?: string, ev?: string) => {
+    setLoading(true)
+    const params = new URLSearchParams({ limit: '200' })
+    if (uid) params.set('user_id', uid)
+    if (ev) params.set('event', ev)
+    api.get<AuthEventRow[]>(`/api/admin/auth-events?${params}`)
+      .then(setEvents)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  return (
+    <div>
+      <SectionLabel topRule={false}>Audit Trail</SectionLabel>
+      <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--muted)' }}>
+        Append-only <code style={{ fontFamily: 'var(--font-data)' }}>auth_events</code> log — every sign-in, MFA, reset, role change
+        and disable/enable action, newest first.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+        <Field label="User ID">
+          <Input placeholder="e.g. 3" value={userFilter} onChange={(e) => setUserFilter(e.target.value)} />
         </Field>
-      </Dialog>
+        <Field label="Event">
+          <Input placeholder="e.g. login_fail" value={eventFilter} onChange={(e) => setEventFilter(e.target.value)} />
+        </Field>
+        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+          <Button variant="secondary" onClick={() => load(userFilter.trim(), eventFilter.trim())}>Apply filters</Button>
+        </div>
+      </div>
+
+      {error && <p style={{ color: 'var(--danger)', fontSize: '14px' }} role="alert">{error}</p>}
+      {loading && <p style={{ color: 'var(--muted)' }}>Loading events…</p>}
+
+      {!loading && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-ui)' }}>
+            <thead>
+              <tr style={{ background: 'var(--surface-sunken)', borderBottom: '2px solid var(--rule-strong)' }}>
+                {['When', 'User', 'Event', 'IP', 'Detail'].map((col) => (
+                  <th key={col} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '12px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id} style={{ borderBottom: '1px solid var(--rule)' }}>
+                  <td style={{ padding: '10px 14px', fontSize: '13px', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                    {new Date(e.created_at).toLocaleString()}
+                  </td>
+                  <td style={{ padding: '10px 14px', fontFamily: 'var(--font-data)', fontSize: '13px' }}>{e.user_id ?? '—'}</td>
+                  <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 500 }}>{e.event}</td>
+                  <td style={{ padding: '10px 14px', fontSize: '13px', color: 'var(--muted)' }}>{e.ip ?? '—'}</td>
+                  <td style={{ padding: '10px 14px', fontSize: '12px', fontFamily: 'var(--font-data)', color: 'var(--muted)', maxWidth: '360px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {Object.keys(e.detail ?? {}).length ? JSON.stringify(e.detail) : '—'}
+                  </td>
+                </tr>
+              ))}
+              {events.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: 'var(--muted)' }}>No events match.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

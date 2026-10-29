@@ -6,6 +6,7 @@ import type { LimitRow } from '../components/LimitsTable'
 import { TestSheet, LimitsTable } from '../components/common'
 import { Button } from '../components/Button'
 import { Wordmark, SectionLabel } from '../components/common'
+import { useSources } from '../App'
 
 function parseLimitRows(limits: TestDetail['limits']): LimitRow[] {
   return limits.map((lim) => ({
@@ -30,6 +31,7 @@ function parsePlainList(items: string[]): string[] {
 export default function TestDetail() {
   const { testId } = useParams<{ testId: string }>()
   const navigate = useNavigate()
+  const { openSource } = useSources()
   const [test, setTest] = useState<TestDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +96,7 @@ export default function TestDetail() {
         sourceType="catalog"
         messageId={undefined}
         onFeedback={() => {}}
+        onSelectSource={openSource}
       />
 
       {/* Verified by line */}

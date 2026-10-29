@@ -6,11 +6,11 @@ import { Button, Field, Input, SectionLabel } from '../components/common'
 // Coordinates are in barycentric coordinates (CH4%, C2H4%, C2H2%)
 const DUVAL_ZONES = [
   { name: 'PD', label: 'Partial Discharge', color: 'rgba(76, 175, 80, 0.15)', points: [[98, 2, 0], [80, 10, 10], [55, 45, 0], [100, 0, 0]] },
-  { name: 'T1', label: 'Thermal < 300°C', color: 'rgba(33, 150, 243, 0.15)', points: [[80, 10, 10], [50, 30, 20], [35, 65, 0], [55, 45, 0]] },
+  { name: 'T1', label: 'Thermal < 300°C', color: 'rgba(180, 150, 80, 0.18)', points: [[80, 10, 10], [50, 30, 20], [35, 65, 0], [55, 45, 0]] },
   { name: 'T2', label: 'Thermal 300-700°C', color: 'rgba(255, 193, 7, 0.15)', points: [[50, 30, 20], [20, 40, 40], [10, 90, 0], [35, 65, 0]] },
   { name: 'T3', label: 'Thermal > 700°C', color: 'rgba(255, 152, 0, 0.15)', points: [[20, 40, 40], [0, 20, 80], [0, 100, 0], [10, 90, 0]] },
   { name: 'D1', label: 'Discharge Low Energy', color: 'rgba(233, 30, 99, 0.15)', points: [[0, 20, 80], [0, 10, 90], [0, 0, 100], [0, 100, 0]] },
-  { name: 'D2', label: 'Discharge High Energy', color: 'rgba(156, 39, 176, 0.15)', points: [[0, 10, 90], [10, 20, 70], [30, 30, 40], [20, 40, 40]] },
+  { name: 'D2', label: 'Discharge High Energy', color: 'rgba(160, 40, 60, 0.18)', points: [[0, 10, 90], [10, 20, 70], [30, 30, 40], [20, 40, 40]] },
   { name: 'DT', label: 'Thermal & Discharge', color: 'rgba(121, 85, 72, 0.15)', points: [[10, 20, 70], [30, 30, 40], [50, 30, 20], [20, 40, 40]] },
 ]
 

@@ -115,20 +115,21 @@ Tabbed form: Basics · Steps (drag to reorder) · Instruments · Limits (source 
 
 ## 6. Design Tokens
 
-| Token | Light | Dark | Use |
+| Token | Light (Paper) | Dark (Control Room) | Use |
 |---|---|---|---|
-| `--bg` | #F6F8FA | #0E1621 | Background |
-| `--surface` | #FFFFFF | #16212E | Cards |
-| `--border` | #DDE3EA | #263547 | Dividers |
-| `--text` | #14202B | #E6EDF5 | Primary text |
-| `--muted` | #5B6B7B | #9FB0C1 | Secondary text |
-| `--primary` | #0B5FFF | #4D8DFF | Actions |
-| `--accent` | #00A6A6 | #2CC8C8 | Citations, highlights |
-| `--warning` | #F5A300 | #FFB733 | Safety banner |
-| `--danger` | #D92D20 | #FF6B5E | Outside limits, critical |
-| `--success` | #12A150 | #3DD68C | Within limits, verified |
+| `--bg` | #F3F0E8 | #101512 | App background (warm paper / control room) |
+| `--surface` | #FBF9F4 | #161D19 | Panels & cards |
+| `--rule` | #CFCABD | #2B3630 | Dividers & borders |
+| `--ink` | #17201C | #E7EBE4 | Primary text |
+| `--muted` | #5E6B63 | #93A097 | Secondary text |
+| `--primary` | #1F5C45 | #7BC9A0 | Primary actions & active tabs (forest green) |
+| `--hazard` | #F2B800 | #FFC933 | Safety banner & hazard stripe |
+| `--danger` | #B3261E | #FF7A70 | Outside limits, critical actions |
+| `--warn` | #A15C00 | #F0A63A | Borderline limits |
+| `--success` | #2F7A3E | #6FD08A | Within limits, verified |
+| `--focus` | #B45309 | #F59E0B | Focus ring (warm amber, zero blue) |
 
-Typography: Inter for the UI, JetBrains Mono for values and standard codes. Scale 12 / 14 / 16 / 20 / 24 / 32; body 16 px on mobile. Spacing on a 4-pt scale; radius 8 / 12 / 999. Icons: Lucide.
+Typography: IBM Plex Sans for the UI, IBM Plex Mono for values and standards, Newsreader for headings. Spacing on a 4-pt scale; radius 2 / 4 px. Icons: custom technical SVGs. Zero blue palette.
 
 ## 7. Components
 

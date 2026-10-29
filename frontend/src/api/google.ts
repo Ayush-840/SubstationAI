@@ -38,7 +38,7 @@ export function loadGoogleScript(): Promise<void> {
 }
 
 interface GisButtonOptions {
-  theme?: 'outline' | 'filled_black' | 'filled_blue'
+  theme?: 'outline' | 'filled_black'
   size?: 'large' | 'medium' | 'small'
   text?: 'signin_with' | 'continue_with' | 'signup_with'
   width?: number

@@ -2,22 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, streamSSE } from '../api/client'
 import type { ChatResult, ConversationDetail, EquipmentClass } from '../types'
 import {
-  SectionLabel,
-  SafetyBlock,
-  LimitsTable,
-  Citation,
-  SourcesList,
-  type CitationItem,
-  VerdictStamp,
-  StatusText,
   EquipmentFilter,
   type EquipmentCategory,
-  Dialog,
-  Toast,
-  EmptyState,
-  Placeholder,
-  Wordmark,
   TestSheet,
+  type CitationItem,
 } from '../components/common'
 import { useSources } from '../App'
 import { copy } from '../copy'
@@ -51,7 +39,7 @@ export default function Chat() {
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+  }, [messages, streaming])
 
   const send = useCallback(async (text: string) => {
     const message = text.trim()
@@ -67,7 +55,7 @@ export default function Chat() {
 
     try {
       await streamSSE('/api/chat/stream',
-        { message, equipment: selected || undefined, conversation_id: conversationId ?? undefined },
+        { message, equipment: selected === 'all' ? undefined : selected, conversation_id: conversationId ?? undefined },
         (ev) => {
           if (ev.type === 'intent') setStatusLine(copy.pages.ask.streamingStatus.reading)
           if (ev.type === 'token') {
@@ -118,7 +106,7 @@ export default function Chat() {
     } catch (err: any) {
       setFeedbackError((e) => ({
         ...e,
-        [id]: err.message ?? 'Your vote was not saved.',
+        [id]: err.message ?? 'Your feedback was not saved.',
       }))
     } finally {
       setFeedbackBusy((b) => ({ ...b, [id]: false }))
@@ -128,61 +116,103 @@ export default function Chat() {
   const newChat = () => {
     setConversationId(null)
     setMessages([])
+    setInput('')
+    setStatusLine('')
   }
 
   return (
     <div className="flex h-full flex-col" style={{ maxWidth: '760px', margin: '0', width: '100%' }}>
-      {/* Equipment filter segmented row */}
-      <div style={{ borderBottom: '1px solid var(--rule)', padding: '12px 0 16px' }}>
+      {/* Top bar with equipment filter & New Chat button */}
+      <div style={{ borderBottom: '1px solid var(--rule)', padding: '10px 0 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', fontFamily: 'var(--font-ui)' }}>
+            Equipment Filter
+          </span>
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={newChat}
+              disabled={streaming}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--primary)',
+                fontSize: '13px',
+                fontWeight: 600,
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                fontFamily: 'var(--font-ui)',
+                padding: '2px 4px',
+              }}
+            >
+              + New question
+            </button>
+          )}
+        </div>
         <EquipmentFilter selected={selected} onChange={(c) => setSelected(c)} />
       </div>
 
-      {/* Messages */}
-      <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
+      {/* Messages Scroll Area */}
+      <div ref={listRef} className="flex-1 overflow-y-auto px-1 py-4" aria-live="polite">
         {messages.length === 0 && (
-          <div style={{ maxWidth: '760px', margin: '0', paddingTop: '48px' }}>
-            <h1 style={{
-              margin: '0 0 16px',
-              fontSize: '28px',
-              fontWeight: 600,
-              color: 'var(--ink)',
-              fontFamily: 'var(--font-display)',
-              lineHeight: 1.2,
-            }}>
-              {copy.pages.ask.emptyHeading}
-            </h1>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ maxWidth: '760px', margin: '0', paddingTop: '32px' }}>
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--primary)', marginBottom: '8px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' }} />
+                SubstationIQ Engineering Assistant
+              </div>
+              <h1 style={{
+                margin: '0 0 8px',
+                fontSize: '26px',
+                fontWeight: 600,
+                color: 'var(--ink)',
+                fontFamily: 'var(--font-display)',
+                lineHeight: 1.25,
+              }}>
+                {copy.pages.ask.emptyHeading}
+              </h1>
+              <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5, color: 'var(--muted)', maxWidth: '58ch' }}>
+                {copy.pages.ask.emptyDescription}
+              </p>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '10px' }}>
               {SUGGESTED.map((s) => (
                 <button
                   key={s.query}
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
+                    flexDirection: 'column',
                     justifyContent: 'space-between',
-                    gap: '16px',
-                    padding: '16px',
+                    gap: '8px',
+                    padding: '14px 16px',
                     border: '1px solid var(--rule)',
                     borderRadius: 'var(--radius)',
                     background: 'var(--surface)',
                     textAlign: 'left',
                     cursor: 'pointer',
-                    fontSize: '15px',
-                    lineHeight: 1.5,
                     color: 'var(--ink)',
                     fontFamily: 'var(--font-ui)',
-                    transition: 'border-color 100ms',
+                    transition: 'border-color 100ms, background-color 100ms',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--primary)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--rule)' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--primary)'
+                    e.currentTarget.style.background = 'var(--surface-sunken)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--rule)'
+                    e.currentTarget.style.background = 'var(--surface)'
+                  }}
                   onClick={() => send(s.query)}
                 >
-                  <span>{s.query}</span>
+                  <span style={{ fontSize: '14px', lineHeight: 1.5, fontWeight: 500 }}>{s.query}</span>
                   <span style={{
-                    fontSize: '13px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
                     color: 'var(--muted)',
-                    fontFamily: 'var(--font-ui)',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
+                    fontFamily: 'var(--font-data)',
                   }}>
                     {s.intent}
                   </span>
@@ -192,44 +222,56 @@ export default function Chat() {
           </div>
         )}
 
+        {/* Message Stream */}
         <div style={{ maxWidth: '760px', margin: '0' }}>
           {messages.map((m, i) =>
-        m.role === 'user' ? (
-          <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-            <div style={{
-              maxWidth: '80%',
-              border: '1px solid var(--rule)',
-              borderRadius: 'var(--radius)',
-              padding: '10px 14px',
-              fontSize: '15px',
-              lineHeight: 1.5,
-              color: 'var(--ink)',
-              background: 'var(--surface)',
-            }}>
-              {m.content}
-            </div>
-          </div>
-        ) : (
-          <TestSheet
-            key={i}
-            intent={m.result?.intent || ''}
-            equipment={m.result?.equipment || null}
-            test={m.result?.test || null}
-            sections={m.result?.sections || {}}
-            citations={(m.result?.citations || []) as CitationItem[]}
-            confidence={m.result?.confidence ?? 0}
-            sourceType={m.result?.source_type || 'rag'}
-            messageId={m.result?.message_id}
-            feedbackGiven={m.result?.message_id ? feedbackGiven[m.result.message_id] : undefined}
-            feedbackBusy={m.result?.message_id ? !!feedbackBusy[m.result.message_id] : false}
-            feedbackError={m.result?.message_id ? feedbackError[m.result.message_id] : undefined}
-            onFeedback={(r) => m.result?.message_id && giveFeedback(m, r)}
-            streaming={streaming && i === messages.length - 1}
-          />
-        ),
-      )}
+            m.role === 'user' ? (
+              <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+                <div style={{
+                  maxWidth: '85%',
+                  border: '1px solid var(--rule)',
+                  borderRadius: 'var(--radius)',
+                  padding: '10px 14px',
+                  fontSize: '15px',
+                  lineHeight: 1.5,
+                  color: 'var(--ink)',
+                  background: 'var(--surface-sunken)',
+                }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', marginBottom: '4px' }}>
+                    You
+                  </div>
+                  {m.content}
+                </div>
+              </div>
+            ) : (
+              <div key={i} style={{ marginBottom: '20px' }}>
+                <TestSheet
+                  intent={m.result?.intent || ''}
+                  equipment={m.result?.equipment || null}
+                  test={m.result?.test || null}
+                  sections={m.result?.sections || {}}
+                  citations={(m.result?.citations || []) as CitationItem[]}
+                  confidence={m.result?.confidence ?? 1}
+                  sourceType={m.result?.source_type || 'rag'}
+                  messageId={m.result?.message_id}
+                  feedbackGiven={m.result?.message_id ? feedbackGiven[m.result.message_id] : undefined}
+                  feedbackBusy={m.result?.message_id ? !!feedbackBusy[m.result.message_id] : false}
+                  feedbackError={m.result?.message_id ? feedbackError[m.result.message_id] : undefined}
+                  onFeedback={(r) => m.result?.message_id && giveFeedback(m, r)}
+                  streaming={streaming && i === messages.length - 1}
+                  onSelectSource={openSource}
+                  answer={m.content || m.result?.answer || ''}
+                  isError={m.isError}
+                />
+              </div>
+            ),
+          )}
+
           {streaming && statusLine && (
-            <p style={{ fontSize: '12px', color: 'var(--muted)' }}>{statusLine}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', fontSize: '13px', color: 'var(--muted)' }}>
+              <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: 'var(--primary)', animation: 'token-fade 600ms infinite alternate' }} />
+              <span>{statusLine}</span>
+            </div>
           )}
         </div>
       </div>
@@ -240,29 +282,44 @@ export default function Chat() {
         bottom: 0,
         borderTop: '1px solid var(--rule)',
         background: 'var(--bg)',
-        padding: '12px 16px',
+        padding: '12px 0 16px',
         zIndex: 10,
       }}>
         <form
           style={{ maxWidth: '760px', margin: '0 auto', display: 'flex', gap: '12px', alignItems: 'flex-end' }}
           onSubmit={(e) => { e.preventDefault(); send(input) }}
         >
-          <textarea
-            className="input resize-none"
-            style={{ flex: 1, minWidth: 0 }}
-            rows={Math.min(4, Math.max(1, input.split('\n').length))}
-            placeholder={copy.pages.ask.composerPlaceholder}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                send(input)
-              }
-            }}
-            disabled={streaming}
-          />
-          <button className="btn-primary" disabled={streaming || !input.trim()} aria-label="Send">
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <textarea
+              className="input resize-none"
+              style={{
+                width: '100%',
+                minHeight: '48px',
+                padding: '10px 12px',
+                lineHeight: 1.45,
+              }}
+              rows={Math.min(5, Math.max(1, input.split('\n').length))}
+              placeholder={copy.pages.ask.composerPlaceholder}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  send(input)
+                }
+              }}
+              disabled={streaming}
+            />
+            <span style={{ fontSize: '11px', color: 'var(--muted)', paddingLeft: '2px' }}>
+              Press Enter to send · Shift+Enter for new line
+            </span>
+          </div>
+          <button
+            className="btn-primary"
+            style={{ minHeight: '48px', padding: '0 20px', alignSelf: 'flex-start' }}
+            disabled={streaming || !input.trim()}
+            aria-label="Send"
+          >
             {copy.pages.ask.composerSend}
           </button>
         </form>

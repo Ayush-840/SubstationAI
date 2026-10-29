@@ -29,6 +29,7 @@
 - [Usage](#usage)
 - [Project Structure](#project-structure)
 - [Evaluation](#evaluation)
+- [Security](#security)
 - [API Overview](#api-overview)
 - [Testing](#testing)
 - [Deployment](#deployment)
@@ -321,7 +322,20 @@ Chosen strategy — **TRD Option A (cookie + double-submit CSRF)** — chosen de
 
 Tradeoff acknowledged: `SameSite=None` means the refresh cookie travels with cross-site requests, which is why the CSRF header check is mandatory rather than optional. The alternatives considered were Option B (keep the refresh token in localStorage — simpler, but a wider XSS exposure) and Option C (reverse-proxy the API under the frontend domain so `SameSite=Lax` works). If deployment ever moves to a single-origin reverse proxy, Option C is the cleaner fallback.
 
-`/api/auth/refresh` and `/api/auth/logout` ship in this build: the refresh token is returned in the response **body** for API clients and set as the HttpOnly cookie for browsers, rotation is enforced server-side (only its SHA-256 is stored, and a consumed token cannot be replayed), and logout additionally deny-lists the access token's `jti` until expiry. The frontend still keeps the access token in `localStorage` (`frontend/src/api/client.ts`); moving it fully in-memory is the remaining client-side step.
+`/api/auth/refresh` and `/api/auth/logout` ship in this build: the refresh token is returned in the response **body** for API clients (and the SPA stores it deliberately client-side — see the tradeoff note in [SECURITY.md](SECURITY.md)); rotation is enforced server-side (only its SHA-256 is stored, and a consumed token cannot be replayed), and logout additionally deny-lists the access token's `jti` until expiry. The access token itself lives **in memory only** (`frontend/src/api/client.ts`) — a page reload silently mints a fresh one through the refresh token.
+
+## Security
+
+The full threat model and day-by-day build record are in [AUTH_TRD.md](AUTH_TRD.md); the short version lives in [SECURITY.md](SECURITY.md). What the deployed build actually enforces:
+
+- **Passwords.** argon2id (memory-hard; bcrypt hashes are upgraded transparently at next login), 8–128 characters with a letter + digit and a common-password deny-list.
+- **Sign-in.** Generic failure message, timing-equalised (dummy hash for unknown e-mails), per-(IP + e-mail) lockout with `Retry-After`. Password reset and e-mail resend always answer `202` whether or not the address exists — no user enumeration.
+- **Sessions.** Access token: JWT, 15 min, in memory only. Refresh token: opaque, 7 days, rotated on every use; a replayed token outside the grace window revokes that session family. Every request re-reads the user from the database, so a demotion or disable takes effect on the *next request*, not at token expiry.
+- **MFA.** TOTP (RFC 6238) with single-use codes and encrypted secret storage, plus one-time recovery codes; a purpose-bound `mfa_token` cannot be used as an access token.
+- **Audit.** An append-only `auth_events` table records every register / verify / login / fail / MFA / reset / session / **role-change / disable** event, viewable by admins at *Admin → Audit* (`GET /api/admin/auth-events`).
+- **Admin controls.** `GET /api/admin/users` and `PATCH /api/admin/users/{id}` (role + enable/disable, admin-only). The last active admin can never be demoted or disabled (HTTP 409). If that guard ever locks you out anyway, recover on the server shell: `python -m app.scripts.make_admin <email>` (idempotent; also re-enables a disabled account).
+- **Headers.** API: `default-src 'none'` CSP (it serves JSON/SSE only), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, HSTS in production, `Cache-Control: no-store` on `/api/auth/*`. SPA (Vercel): its own CSP allow-listing only `'self'` and the API origin (`frontend/vercel.json`).
+- **Tests.** Threats A-01…A-14 in the [test matrix](AUTH_TRD.md#8-test-matrix-acceptance-criteria) each map to a named test in `backend/tests/test_api.py` (e.g. `test_a11_demoted_admin_loses_access_on_next_request`, `test_a12_last_admin_cannot_be_demoted_or_disabled`).
 
 ## API Overview
 

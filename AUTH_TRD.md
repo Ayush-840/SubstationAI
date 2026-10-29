@@ -25,7 +25,7 @@ Register/login "did not work properly" for four different reasons at once (brows
 | T2 | User enumeration | "No such user" vs "wrong password"; timing difference | One generic message, dummy hash on unknown e-mail, identical 429 behaviour | ✅ |
 | T3 | Weak passwords | `12345678` | Length 8–128, ≤ 72 bytes, letter+digit, common-password list; 🔨 breached-password check | ✅ / 🔨 |
 | T4 | Stolen database | Hashes leaked | Slow salted hash, refresh tokens stored only as SHA-256, TOTP secrets encrypted | ✅ bcrypt + hashed refresh; 🔨 argon2id, 🔨 encrypted TOTP |
-| T5 | XSS steals a token | Injected script reads storage | Access token in memory only (15 min); strict CSP; refresh token rotates | ✅ memory + rotation; 🔨 CSP |
+| T5 | XSS steals a token | Injected script reads storage | Access token in memory only (15 min); strict CSP; refresh token rotates | ✅ |
 | T6 | Refresh-token theft / replay | Copied token used after the user | Rotation, replay detection → revoke all sessions, 🔨 token families + device list | ✅ replay; 🔨 families |
 | T7 | Privilege escalation | Public sign-up posts `"role":"admin"` | Role is never read from sign-up input; role changes admin-only and audited | ✅ sign-up; 🔨 audit |
 | T8 | Account takeover through reset | Attacker triggers a reset e-mail | Single-use, 30-min, hashed reset tokens; generic response; revoke sessions on reset | 🔨 |

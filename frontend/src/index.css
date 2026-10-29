@@ -440,7 +440,7 @@ body {
     background: none !important;
     border: none !important;
     padding: 0 !important;
-    color: #006 !important;
+    color: #17201C !important;
     text-decoration: underline !important;
     font-size: 9pt !important;
     font-family: "IBM Plex Sans", sans-serif !important;
@@ -470,7 +470,7 @@ body {
 
   /* Citations in text - superscripts */
   .test-sheet sup button {
-    color: #006 !important;
+    color: #17201C !important;
     font-size: 7pt !important;
     font-weight: 600 !important;
     text-decoration: underline !important;

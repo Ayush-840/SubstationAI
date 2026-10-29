@@ -116,6 +116,14 @@ def add_security_middleware(app: FastAPI) -> None:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Day 10 (threat T5): this service answers JSON/SSE only — the SPA is
+        # a separate origin with its own headers. Nothing here may run script,
+        # embed or be embedded, so an allow-nothing CSP is the strictest
+        # correct policy.
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+        )
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         if request.url.path.startswith("/api/auth/"):

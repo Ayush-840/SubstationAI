@@ -20,7 +20,7 @@
   --danger: #B3261E;
   --warn: #A15C00;
   --success: #2F7A3E;
-  --focus: #0B57D0;
+  --focus: #B45309;
 
   --radius-sm: 2px;
   --radius: 4px;
@@ -53,7 +53,7 @@
   --danger: #FF7A70;
   --warn: #F0A63A;
   --success: #6FD08A;
-  --focus: #8AB4F8;
+  --focus: #F59E0B;
 }
 
 /* ------- Outdoor ("Sunlight") — max contrast for direct sun ------- */
@@ -72,7 +72,7 @@
   --danger: #9B0000;
   --warn: #7A3E00;
   --success: #0B5A1E;
-  --focus: #003EA6;
+  --focus: #000000;
   --text-body-size: 18px;
 }
 
@@ -93,7 +93,7 @@
     --danger: #FF7A70;
     --warn: #F0A63A;
     --success: #6FD08A;
-    --focus: #8AB4F8;
+    --focus: #F59E0B;
   }
 }
 

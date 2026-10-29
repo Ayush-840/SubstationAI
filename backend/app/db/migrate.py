@@ -118,6 +118,11 @@ def migrate_auth_columns(engine: Engine) -> None:
             conn.execute(
                 text("ALTER TABLE users ADD COLUMN totp_last_timestep INTEGER")
             )
+        # Day 10: admin disable switch. Existing rows read as "active".
+        if "is_active" not in existing:
+            conn.execute(
+                text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
+            )
 
         # Day 6: device tracking on refresh_tokens.
         if "refresh_tokens" in inspector.get_table_names():

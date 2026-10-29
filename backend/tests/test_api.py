@@ -2478,3 +2478,209 @@ def test_google_signin_still_requires_totp_when_enabled(client, monkeypatch):
     assert ok.status_code == 200
     assert ok.json()["access_token"]
     assert (_events("login_ok", user_id=uid)[-1].detail or {}).get("mfa") is True
+
+
+# --- AUTH_TRD Day 10: admin people management + audit viewer (A-11, A-12) ------
+
+
+def _set_role(client, admin_headers, target_id: int, role: str):
+    return client.patch(
+        f"/api/admin/users/{target_id}", json={"role": role}, headers=admin_headers
+    )
+
+
+def test_admin_users_list_never_exposes_secrets(client, admin_headers):
+    r = client.get("/api/admin/users", headers=admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert any(u["email"] == "a@test.dev" for u in body)
+    for u in body:
+        assert set(u) == {
+            "id", "name", "email", "role", "is_active",
+            "email_verified_at", "totp_enabled", "created_at",
+        }
+
+
+def test_admin_users_endpoints_require_admin(client, user_headers):
+    assert client.get("/api/admin/users", headers=user_headers).status_code == 403
+    assert client.get("/api/admin/auth-events", headers=user_headers).status_code == 403
+    assert client.patch(
+        "/api/admin/users/1", json={"role": "trainee"}, headers=user_headers
+    ).status_code == 403
+
+
+def test_a11_demoted_admin_loses_access_on_next_request(client):
+    """A-11: the role lives in the database, not the token — demotion is immediate."""
+    email = "a11-admin@test.dev"
+    uid = _register_uid(client, email)
+    admin_h = _login(client, "a@test.dev")
+    assert _set_role(client, admin_h, uid, "admin").status_code == 200
+
+    victim = {"Authorization": f"Bearer {_login_token(client, email)}"}
+    assert client.get("/api/auth/me", headers=victim).status_code == 200
+
+    demote = _set_role(client, admin_h, uid, "trainee")
+    assert demote.status_code == 200
+    assert demote.json()["role"] == "trainee"
+
+    # the very next request with the still-unexpired token: the account is
+    # fine, but the admin surface is closed (role comes from the DB, A-11)
+    me = client.get("/api/auth/me", headers=victim)
+    assert me.status_code == 200 and me.json()["role"] == "trainee"
+    assert client.get("/api/admin/users", headers=victim).status_code == 403
+
+    # …and the change is in the audit trail with actor + before/after
+    # (two rows total: the promotion that made them an admin, then the demotion)
+    rows = _events("role_change", user_id=uid)
+    assert len(rows) == 2
+    assert rows[-1].detail["from"] == "admin" and rows[-1].detail["to"] == "trainee"
+    assert rows[-1].detail["actor"] == _uid("a@test.dev")
+
+
+def test_a12_last_admin_cannot_be_demoted_or_disabled(client, admin_headers):
+    """A-12: the only remaining admin is protected (409)."""
+    last_id = _uid("a@test.dev")
+
+    # Earlier tests seed a demo admin — park every other admin for the duration
+    # of this test so "last admin" actually means last, then put them back.
+    db = SessionLocal()
+    try:
+        parked = [
+            (u.id, u.role)
+            for u in db.query(User).filter(
+                User.role == UserRole.ADMIN, User.id != last_id
+            ).all()
+        ]
+        for pid, _ in parked:
+            db.query(User).filter(User.id == pid).update({"role": UserRole.TRAINEE})
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        assert _set_role(client, admin_headers, last_id, "trainee").status_code == 409
+        assert client.patch(
+            f"/api/admin/users/{last_id}", json={"is_active": False}, headers=admin_headers
+        ).status_code == 409
+
+        # with a second admin around, the first one can be demoted
+        second = "a12-second@test.dev"
+        sid = _register_uid(client, second)
+        assert _set_role(client, admin_headers, sid, "admin").status_code == 200
+        assert _set_role(client, admin_headers, last_id, "trainee").status_code == 200
+
+        # but now *that* one is the last admin
+        second_headers = {"Authorization": f"Bearer {_login_token(client, second)}"}
+        assert _set_role(client, second_headers, sid, "trainee").status_code == 409
+
+        # restore the seeded admin and the new one to plain trainee
+        assert _set_role(client, second_headers, last_id, "admin").status_code == 200
+        assert _set_role(client, admin_headers, sid, "trainee").status_code == 200
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(User).filter(User.id == last_id).update({"role": UserRole.ADMIN})
+            for pid, role in parked:
+                db.query(User).filter(User.id == pid).update({"role": role})
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_disabled_account_is_dead_everywhere(client):
+    """Password login, existing tokens and refresh all stop working (Day 10)."""
+    email = "disabled@test.dev"
+    uid = _register_uid(client, email)
+    admin_h = _login(client, "a@test.dev")
+
+    # grab a refresh token BEFORE the account is disabled
+    login = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert login.status_code == 200
+    refresh = login.json()["refresh_token"]
+    access = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert client.get("/api/auth/me", headers=access).status_code == 200
+
+    r = client.patch(
+        f"/api/admin/users/{uid}", json={"is_active": False}, headers=admin_h
+    )
+    assert r.status_code == 200 and r.json()["is_active"] is False
+    assert _events("account_disabled", user_id=uid)
+
+    # a still-valid token holds no session anymore (403, checked per request)
+    assert client.get("/api/auth/me", headers=access).status_code == 403
+    # the password is still correct — the account is disabled, so 403
+    bad = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    assert bad.status_code == 403 and bad.json()["detail"] == "Account disabled"
+    # an old refresh token cannot mint a new session either
+    ref = client.post("/api/auth/refresh", json={"refresh_token": refresh})
+    assert ref.status_code == 401
+
+    # re-enable → everything works again, audited
+    r = client.patch(
+        f"/api/admin/users/{uid}", json={"is_active": True}, headers=admin_h
+    )
+    assert r.status_code == 200 and r.json()["is_active"] is True
+    assert _events("account_enabled", user_id=uid)
+    assert client.get("/api/auth/me", headers=access).status_code == 200
+
+
+def test_admin_auth_events_viewer_filters(client, admin_headers):
+    email = "audit-viewer@test.dev"
+    uid = _register_uid(client, email)
+    client.post("/api/auth/login", json={"email": email, "password": "wrong-pass"})
+
+    r = client.get(
+        f"/api/admin/auth-events?user_id={uid}&event=login_fail&limit=10",
+        headers=admin_headers,
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert rows and all(x["event"] == "login_fail" and x["user_id"] == uid for x in rows)
+    # newest first
+    assert rows[0]["id"] >= rows[-1]["id"]
+
+
+def test_patch_validation_and_404(client, admin_headers):
+    uid = _uid("u@test.dev")
+    assert client.patch(
+        f"/api/admin/users/{uid}", json={}, headers=admin_headers
+    ).status_code == 400
+    assert client.patch(
+        "/api/admin/users/999999", json={"role": "engineer"}, headers=admin_headers
+    ).status_code == 404
+
+
+def test_make_admin_cli_recovers_lockout(client):
+    """Offline recovery path: promote from the server shell, idempotently."""
+    from app.scripts.make_admin import make_admin
+
+    email = "cli-admin@test.dev"
+    uid = _register_uid(client, email)
+    admin_h = _login(client, "a@test.dev")
+    client.patch(f"/api/admin/users/{uid}", json={"is_active": False}, headers=admin_h)
+
+    assert make_admin(email) == 0
+    db = SessionLocal()
+    try:
+        u = db.query(User).filter(User.id == uid).first()
+        assert u.role == UserRole.ADMIN and u.is_active is True
+    finally:
+        db.close()
+    assert _events("role_change", user_id=uid)[-1].detail["actor"] == "make_admin_cli"
+
+    # idempotent: running it again changes nothing and succeeds
+    assert make_admin(email) == 0
+    assert make_admin("nobody@test.dev") == 1
+
+    # the recovered admin can actually sign in
+    assert client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {_login_token(client, email)}"}
+    ).status_code == 200
+
+
+def test_api_sends_allow_nothing_csp(client):
+    """Day 10 (T5): the API is JSON/SSE only — CSP allows no script at all."""
+    r = client.get("/health")
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "default-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp

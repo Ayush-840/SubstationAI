@@ -128,6 +128,44 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class AdminUserResponse(BaseModel):
+    """GET /api/admin/users — the admin people table (never any secret)."""
+
+    id: int
+    name: str
+    email: str
+    role: UserRole
+    is_active: bool = True
+    email_verified_at: Optional[datetime] = None
+    totp_enabled: bool = False
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AdminUserUpdateIn(BaseModel):
+    """PATCH /api/admin/users/{id} — every field optional; only sent ones change."""
+
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+
+class AuthEventResponse(BaseModel):
+    """GET /api/admin/auth-events — one audit row for the viewer."""
+
+    id: int
+    user_id: Optional[int] = None
+    event: str
+    ip: Optional[str] = None
+    user_agent: Optional[str] = None
+    detail: dict = {}
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class VerifyEmailIn(BaseModel):
     """POST /api/auth/verify-email — token comes from the e-mail link."""
 

@@ -1,13 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
 import threading
 from pathlib import Path
 from app.db.session import get_db
-from app.db.models import User, Document, DocumentStatus, Chunk
+from app.db.models import AuthEvent, User, UserRole, Document, DocumentStatus, Chunk
+from app.core.audit import log_event
 from app.core.security import get_current_admin
-from app.schemas import DocumentResponse, AnalyticsResponse
+from app.schemas import (
+    AdminUserResponse,
+    AdminUserUpdateIn,
+    AuthEventResponse,
+    DocumentResponse,
+    AnalyticsResponse,
+)
 from app.rag.ingest import process_document
 from app.core.paths import RAW_DOCS_DIR
 
@@ -189,3 +196,97 @@ def update_catalog_test(
 
     db.commit()
     return {"ok": True}
+
+
+# ── people management + audit trail (AUTH_TRD Day 10, A-11 / A-12) ──────────
+
+
+@router.get("/users", response_model=List[AdminUserResponse])
+def list_users(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Every account, newest first. Never returns password hashes or secrets."""
+    return (
+        db.query(User).order_by(User.id).all()
+    )
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserResponse)
+def update_user(
+    user_id: int,
+    payload: AdminUserUpdateIn,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Change a user's role and/or enabled flag (admin only).
+
+    Guards:
+    * the last active admin can never be demoted or disabled (A-12 → 409);
+    * every change writes a ``role_change`` / ``account_disabled`` /
+      ``account_enabled`` audit row with actor and before/after values;
+    * a demoted admin loses admin access on their *next request* — the role
+      is loaded from the database each time, never from the token (A-11).
+    """
+    target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise HTTPException(404, "User not found")
+
+    if payload.role is None and payload.is_active is None:
+        raise HTTPException(400, "Nothing to change")
+
+    losing_admin = target.role == UserRole.ADMIN and (
+        (payload.role is not None and payload.role != UserRole.ADMIN)
+        or (payload.is_active is False)
+    )
+    if losing_admin:
+        others = (
+            db.query(User.id)
+            .filter(
+                User.id != target.id,
+                User.role == UserRole.ADMIN,
+                User.is_active.isnot(False),
+            )
+            .count()
+        )
+        if others == 0:
+            raise HTTPException(
+                409, "Cannot demote or disable the last admin"
+            )
+
+    actor = current_user.id
+    if payload.role is not None and payload.role != target.role:
+        old_role = target.role
+        target.role = payload.role
+        log_event(
+            db, "role_change", user_id=target.id,
+            detail={"from": old_role.value, "to": payload.role.value, "actor": actor},
+        )
+    if payload.is_active is not None and bool(target.is_active) != payload.is_active:
+        target.is_active = payload.is_active
+        log_event(
+            db,
+            "account_disabled" if not payload.is_active else "account_enabled",
+            user_id=target.id,
+            detail={"actor": actor},
+        )
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+@router.get("/auth-events", response_model=List[AuthEventResponse])
+def list_auth_events(
+    user_id: Optional[int] = Query(None),
+    event: Optional[str] = Query(None, max_length=40),
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Audit viewer: newest-first slice of the append-only auth_events table."""
+    q = db.query(AuthEvent)
+    if user_id is not None:
+        q = q.filter(AuthEvent.user_id == user_id)
+    if event:
+        q = q.filter(AuthEvent.event == event)
+    return q.order_by(AuthEvent.id.desc()).limit(limit).all()

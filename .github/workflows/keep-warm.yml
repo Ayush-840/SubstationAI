@@ -1,0 +1,28 @@
+# Render's free web service sleeps after ~15 min idle; the first user after a
+# nap waits 40-60 s for the cold start. A /health ping every 10 minutes keeps
+# the instance warm (720 h/month of a 750 h free allowance).
+#
+# GitHub schedules can be delayed on the free tier, so this is a best-effort
+# warm-up -- the frontend also retries after a wake-up ping (api/client.ts).
+name: keep-warm
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: keep-warm
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 150 \
+            https://substationiq-api.onrender.com/health) || code="curl-error"
+          echo "GET /health -> $code"
+          [ "$code" = "200" ] || exit 0

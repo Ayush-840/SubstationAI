@@ -143,6 +143,14 @@ const AUTH_PATHS = [
   '/api/auth/mfa/verify',
 ]
 
+let waking: Promise<boolean> | null = null
+
+/** One shared wake-up: concurrent network failures wait for a single ping. */
+const wake = () => {
+  waking ??= warmUp().finally(() => { waking = null })
+  return waking
+}
+
 async function authedFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
   const headers = new Headers(init.headers)
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
@@ -150,7 +158,9 @@ async function authedFetch(path: string, init: RequestInit = {}, retry = true): 
   try {
     res = await fetch(`${API_BASE}${path}`, { ...init, headers })
   } catch {
-    throw new ApiError(0, NETWORK_MSG)
+    if (!retry) throw new ApiError(0, NETWORK_MSG)
+    await wake()
+    return authedFetch(path, init, false)
   }
   if (res.status === 401 && retry && !AUTH_PATHS.includes(path)) {
     const r = await refreshSession()

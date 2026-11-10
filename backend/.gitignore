@@ -1,0 +1,30 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Environment (NEVER commit real secrets) ───────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Uploads (keep the .gitkeep placeholder, ignore real files) ────────────────
+uploads/*
+!uploads/.gitkeep
+
+# ── Prisma generated client (regenerated via `prisma generate`) ───────────────
+src/generated/
+node_modules/.prisma/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+logs/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Build artifacts ───────────────────────────────────────────────────────────
+dist/
+build/

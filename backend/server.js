@@ -10,7 +10,9 @@ import { notFound, errorHandler } from "./src/middleware/error.js";
 import { generalLimiter } from "./src/middleware/rateLimit.js";
 
 // ── Route imports ─────────────────────────────────────────────────────────────
-import authRoutes from "./src/routes/auth.js";
+import authRoutes      from "./src/routes/auth.js";
+import equipmentRoutes from "./src/routes/equipment.js";
+import testRoutes      from "./src/routes/tests.js";
 
 const app = express();
 
@@ -39,7 +41,9 @@ app.get("/api/health", async (_req, res) => {
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRoutes);
+app.use("/api/auth",      authRoutes);
+app.use("/api/equipment", equipmentRoutes);
+app.use("/api/tests",     testRoutes);
 
 // ── 404 + error handler ───────────────────────────────────────────────────────
 app.use(notFound);

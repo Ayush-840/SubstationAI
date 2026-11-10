@@ -9,6 +9,9 @@ import { prisma } from "./src/db.js";
 import { notFound, errorHandler } from "./src/middleware/error.js";
 import { generalLimiter } from "./src/middleware/rateLimit.js";
 
+// ── Route imports ─────────────────────────────────────────────────────────────
+import authRoutes from "./src/routes/auth.js";
+
 const app = express();
 
 app.use(helmet());
@@ -34,6 +37,9 @@ app.get("/api/health", async (_req, res) => {
     res.status(503).json({ status: "error", db: "disconnected" });
   }
 });
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+app.use("/api/auth", authRoutes);
 
 // ── 404 + error handler ───────────────────────────────────────────────────────
 app.use(notFound);

@@ -10,7 +10,8 @@
 
 const cache = new Map(); // key -> { value, expiresAt }
 
-const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_ENTRIES = 200;
 
 /**
  * Get a cached entry. Returns undefined if missing or expired.
@@ -29,6 +30,8 @@ export function cacheGet(key) {
  * Store a value with an optional TTL (ms). Defaults to 5 minutes.
  */
 export function cacheSet(key, value, ttlMs = DEFAULT_TTL_MS) {
+  if (cache.has(key)) cache.delete(key);
+  while (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value);
   cache.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
 

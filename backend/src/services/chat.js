@@ -58,7 +58,7 @@ export async function loadHistory(sessionId) {
  * Truncates to 60 chars. Fire-and-forget (no await needed in hot path).
  */
 export async function autoTitleSession(sessionId, question) {
-  const title = question.trim().slice(0, 60) + (question.length > 60 ? "…" : "");
+  const title = question.trim().slice(0, 60);
   await prisma.chatSession.update({
     where: { id: sessionId },
     data: { title },
@@ -79,24 +79,21 @@ export async function autoTitleSession(sessionId, question) {
  * Returns { answer, sources, intent, messageId, sessionId, cached }
  */
 export async function processChat(sessionId, userId, question, options = {}) {
-  const { noCache = false, equipmentType = "" } = options;
+  const { useCache = true, equipmentType = "" } = options;
 
   // ── Ownership check ───────────────────────────────────────────────────────
   await getOwnedSession(sessionId, userId);
 
   // ── Cache lookup ──────────────────────────────────────────────────────────
   const cacheKey = buildCacheKey(question, equipmentType);
-  if (!noCache) {
+  const history = await loadHistory(sessionId);
+  if (useCache && history.length === 0) {
     const cached = cacheGet(cacheKey);
     if (cached) {
-      console.log(`[Chat] Cache HIT for key: "${cacheKey}"`);
+      console.log(`[Chat] question="${question.slice(0, 60)}" latency=0ms cacheHit=true`);
       // Still persist the user message even when answer comes from cache
-      const [userMsg, assistantMsg] = await persistMessages(
-        sessionId,
-        question,
-        cached.answer,
-        cached.sources
-      );
+      const [userMsg] = await persistUserMessage(sessionId, question);
+      const assistantMsg = await persistAssistantMessage(sessionId, cached.answer, cached.sources);
       await maybeAutoTitle(sessionId, question);
       return {
         ...cached,
@@ -108,10 +105,19 @@ export async function processChat(sessionId, userId, question, options = {}) {
   }
 
   // ── Load history & call AI ────────────────────────────────────────────────
-  const history = await loadHistory(sessionId);
-
   const start = Date.now();
-  const { answer, sources, intent } = await getAnswer(question, history);
+  // Save the question before calling AI; a failed call must not lose it.
+  await persistUserMessage(sessionId, question);
+  let result;
+  try {
+    result = await getAnswer(question, history);
+  } catch {
+    const err = new Error("AI service failed, please try again");
+    err.status = 502;
+    err.expose = true;
+    throw err;
+  }
+  const { answer, sources, intent } = result;
   const latencyMs = Date.now() - start;
 
   console.log(
@@ -119,18 +125,13 @@ export async function processChat(sessionId, userId, question, options = {}) {
   );
 
   // ── Persist messages ──────────────────────────────────────────────────────
-  const [_userMsg, assistantMsg] = await persistMessages(
-    sessionId,
-    question,
-    answer,
-    sources
-  );
+  const assistantMsg = await persistAssistantMessage(sessionId, answer, sources);
 
   // ── Auto-title (only if session still has default title) ──────────────────
   await maybeAutoTitle(sessionId, question);
 
   // ── Cache the result ──────────────────────────────────────────────────────
-  cacheSet(cacheKey, { answer, sources, intent });
+  if (history.length === 0) cacheSet(cacheKey, { answer, sources, intent });
 
   return {
     answer,
@@ -164,6 +165,14 @@ async function persistMessages(sessionId, question, answer, sources) {
       },
     }),
   ]);
+}
+
+async function persistUserMessage(sessionId, question) {
+  return prisma.message.create({ data: { sessionId, role: "USER", content: question } });
+}
+
+async function persistAssistantMessage(sessionId, answer, sources) {
+  return prisma.message.create({ data: { sessionId, role: "ASSISTANT", content: answer, sources: sources ?? [] } });
 }
 
 async function maybeAutoTitle(sessionId, question) {

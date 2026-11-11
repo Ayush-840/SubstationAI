@@ -1,0 +1,125 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  ENGINEER
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String        @id @default(uuid())
+  name      String
+  email     String        @unique
+  password  String
+  role      Role          @default(ENGINEER)
+  createdAt DateTime      @default(now())
+  sessions  ChatSession[]
+
+  @@map("users")
+}
+
+model Equipment {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String?
+  tests       Test[]
+
+  @@map("equipment")
+}
+
+model Test {
+  id              String    @id @default(uuid())
+  equipment       Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipmentId     String
+  name            String
+  aliases         String[]
+  steps           String[]
+  limits          String?
+  safety          String[]
+  tools           String[]
+  standard        String?
+  troubleshooting String?
+
+  @@map("tests")
+}
+
+model Document {
+  id            String         @id @default(uuid())
+  title         String
+  filePath      String
+  equipmentType String?
+  standard      String?
+  status        DocumentStatus @default(PENDING)
+  error         String?
+  uploadedAt    DateTime       @default(now())
+  chunks        DocumentChunk[]
+
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id            String    @id @default(uuid())
+  document      Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId    String
+  content       String
+  page          Int?
+  equipmentType String?
+  testName      String?
+  standard      String?
+  // Person 2 owns this column and its indexes. We just declare it.
+  embedding     Unsupported("vector(768)")?
+
+  @@map("document_chunks")
+}
+
+model ChatSession {
+  id        String    @id @default(uuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  title     String    @default("New Chat")
+  createdAt DateTime  @default(now())
+  messages  Message[]
+
+  @@map("chat_sessions")
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String
+  role      MessageRole
+  content   String
+  sources   Json?
+  createdAt DateTime    @default(now())
+
+  @@map("messages")
+}
+

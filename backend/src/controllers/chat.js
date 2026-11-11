@@ -8,18 +8,18 @@ import { loadHistory } from "../services/chat.js";
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
 const createSessionSchema = z.object({
-  title: z.string().max(120).optional(),
+  title: z.string().max(100).optional(),
 });
 
 const renameSesionSchema = z.object({
-  title: z.string().min(1, "title is required").max(120),
+  title: z.string().trim().min(1, "title is required").max(100),
 });
 
 const chatSchema = z.object({
-  question: z.string().min(1, "question is required").max(2000),
+  question: z.string().trim().min(1, "question is required").max(1000),
   sessionId: z.string().uuid().optional(),
   equipmentType: z.string().optional(),
-  noCache: z.boolean().optional().default(false),
+  useCache: z.boolean().optional().default(true),
 });
 
 // ── Session controllers ───────────────────────────────────────────────────────
@@ -38,18 +38,23 @@ export async function createSession(req, res) {
 
 /** GET /api/chat/sessions */
 export async function listSessions(req, res) {
-  const sessions = await prisma.chatSession.findMany({
-    where: { userId: req.user.id },
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
+  const where = { userId: req.user.id };
+  const [sessions, total] = await Promise.all([prisma.chatSession.findMany({
+    where,
     orderBy: { createdAt: "desc" },
+    skip: (page - 1) * limit,
+    take: limit,
     include: { _count: { select: { messages: true } } },
-  });
+  }), prisma.chatSession.count({ where })]);
 
-  const formatted = sessions.map(({ _count, ...s }) => ({
-    ...s,
-    messageCount: _count.messages,
+  const items = await Promise.all(sessions.map(async ({ _count, ...s }) => {
+    const lastMessage = await prisma.message.findFirst({ where: { sessionId: s.id }, orderBy: { createdAt: "desc" }, select: { content: true } });
+    return { ...s, messageCount: _count.messages, lastMessage: lastMessage?.content.slice(0, 120) ?? null };
   }));
 
-  res.json({ sessions: formatted });
+  res.json({ items, page, limit, total });
 }
 
 /** GET /api/chat/sessions/:id */
@@ -85,7 +90,7 @@ export async function renameSession(req, res) {
 export async function deleteSession(req, res) {
   await getOwnedSession(req.params.id, req.user.id);
   await prisma.chatSession.delete({ where: { id: req.params.id } });
-  res.json({ message: "Session deleted" });
+  res.status(204).end();
 }
 
 // ── Chat controllers ──────────────────────────────────────────────────────────
@@ -98,7 +103,7 @@ export async function deleteSession(req, res) {
  * Returns: { answer, sources, intent, messageId, sessionId, cached }
  */
 export async function chat(req, res) {
-  const { question, sessionId: bodySessionId, equipmentType, noCache } =
+  const { question, sessionId: bodySessionId, equipmentType, useCache } =
     chatSchema.parse(req.body);
 
   let sessionId = bodySessionId;
@@ -114,11 +119,11 @@ export async function chat(req, res) {
   }
 
   const result = await processChat(sessionId, req.user.id, question, {
-    noCache,
+    useCache,
     equipmentType,
   });
 
-  res.json({ ...result, ...(newSession ? { newSession: true } : {}) });
+  res.json(result);
 }
 
 /**
@@ -133,7 +138,7 @@ export async function chat(req, res) {
  * If getAnswer doesn't support streaming, the full answer is chunked in ~20-word pieces.
  */
 export async function chatStream(req, res) {
-  const { question, sessionId: bodySessionId, equipmentType, noCache } =
+  const { question, sessionId: bodySessionId, equipmentType, useCache } =
     chatSchema.parse(req.body);
 
   let sessionId = bodySessionId;
@@ -173,7 +178,8 @@ export async function chatStream(req, res) {
   try {
     // ── Cache check ─────────────────────────────────────────────────────────
     const cacheKey = buildCacheKey(question, equipmentType ?? "");
-    const cached = !noCache ? cacheGet(cacheKey) : null;
+    const streamHistory = await loadHistory(sessionId);
+    const cached = useCache && streamHistory.length === 0 ? cacheGet(cacheKey) : null;
 
     if (cached) {
       // Stream the cached answer in word-sized chunks
@@ -208,9 +214,13 @@ export async function chatStream(req, res) {
     }
 
     // ── Live answer ─────────────────────────────────────────────────────────
-    const history = await loadHistory(sessionId);
+    const history = streamHistory;
     const start = Date.now();
-    const { answer, sources, intent } = await getAnswer(question, history);
+    await prisma.message.create({ data: { sessionId, role: "USER", content: question } });
+    let result;
+    try { result = await getAnswer(question, history); }
+    catch { send({ type: "error", error: "AI service failed, please try again" }); res.status(502); res.end(); return; }
+    const { answer, sources, intent } = result;
     const latencyMs = Date.now() - start;
 
     console.log(
@@ -240,7 +250,7 @@ export async function chatStream(req, res) {
       await maybeAutoTitleStream(sessionId, question);
 
       // Cache
-      cacheSet(cacheKey, { answer, sources, intent });
+      if (history.length === 0) cacheSet(cacheKey, { answer, sources, intent });
 
       send({
         type: "done",
@@ -290,7 +300,7 @@ async function maybeAutoTitleStream(sessionId, question) {
     select: { title: true },
   });
   if (session?.title === "New Chat") {
-    const title = question.trim().slice(0, 60) + (question.length > 60 ? "…" : "");
+    const title = question.trim().slice(0, 60);
     prisma.chatSession
       .update({ where: { id: sessionId }, data: { title } })
       .catch((e) => console.error("[Stream] Auto-title failed:", e.message));

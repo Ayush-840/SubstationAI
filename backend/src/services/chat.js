@@ -2,11 +2,12 @@
  * src/services/chat.js
  *
  * Business logic for chat: session ownership, history loading,
- * calling getAnswer, persisting messages, and auto-titling.
+ * calling getAnswer, persisting messages, auto-titling, caching.
  */
 
 import { prisma } from "../db.js";
 import { getAnswer } from "../ai/index.js";
+import { buildCacheKey, cacheGet, cacheSet } from "./cache.js";
 
 // Number of past message pairs (user+assistant) to include as history
 const HISTORY_LIMIT = 10;
@@ -68,17 +69,43 @@ export async function autoTitleSession(sessionId, question) {
 
 /**
  * Full answer flow:
- *   1. Verify session ownership
+ *   1. Check cache (bypass with { noCache: true } option)
  *   2. Load history
  *   3. Call getAnswer stub / real AI
  *   4. Persist USER + ASSISTANT messages
  *   5. Auto-title if first message
+ *   6. Update cache
  *
- * Returns { answer, sources, intent, messageId, sessionId }
+ * Returns { answer, sources, intent, messageId, sessionId, cached }
  */
-export async function processChat(sessionId, userId, question) {
+export async function processChat(sessionId, userId, question, options = {}) {
+  const { noCache = false, equipmentType = "" } = options;
+
   // ── Ownership check ───────────────────────────────────────────────────────
   await getOwnedSession(sessionId, userId);
+
+  // ── Cache lookup ──────────────────────────────────────────────────────────
+  const cacheKey = buildCacheKey(question, equipmentType);
+  if (!noCache) {
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      console.log(`[Chat] Cache HIT for key: "${cacheKey}"`);
+      // Still persist the user message even when answer comes from cache
+      const [userMsg, assistantMsg] = await persistMessages(
+        sessionId,
+        question,
+        cached.answer,
+        cached.sources
+      );
+      await maybeAutoTitle(sessionId, question);
+      return {
+        ...cached,
+        messageId: assistantMsg.id,
+        sessionId,
+        cached: true,
+      };
+    }
+  }
 
   // ── Load history & call AI ────────────────────────────────────────────────
   const history = await loadHistory(sessionId);
@@ -102,18 +129,23 @@ export async function processChat(sessionId, userId, question) {
   // ── Auto-title (only if session still has default title) ──────────────────
   await maybeAutoTitle(sessionId, question);
 
+  // ── Cache the result ──────────────────────────────────────────────────────
+  cacheSet(cacheKey, { answer, sources, intent });
+
   return {
     answer,
     sources,
     intent,
     messageId: assistantMsg.id,
     sessionId,
+    cached: false,
   };
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 async function persistMessages(sessionId, question, answer, sources) {
+  // Use a transaction so both messages are always created together
   return prisma.$transaction([
     prisma.message.create({
       data: {
@@ -140,8 +172,10 @@ async function maybeAutoTitle(sessionId, question) {
     select: { title: true },
   });
   if (session?.title === "New Chat") {
+    // Fire and forget — don't block the response
     autoTitleSession(sessionId, question).catch((err) =>
       console.error("[Chat] Auto-title failed:", err.message)
     );
   }
 }
+

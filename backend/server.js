@@ -3,6 +3,8 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
+import swaggerUi from "swagger-ui-express";
+import { openapi } from "./src/docs/openapi.js";
 import adminRoutes from "./src/routes/admin.js";
 import { requireAuth } from "./src/middleware/auth.js";
 import { requireRole } from "./src/middleware/role.js";
@@ -53,6 +55,8 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openapi));
+
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use("/api/auth",      authRoutes);
 app.use("/api/equipment", equipmentRoutes);
@@ -72,6 +76,7 @@ const server = app.listen(config.port, () => {
   recoverStuckDocuments().catch((err) => console.error("Document recovery failed:", err.message));
   console.log(`🚀 SubstationAI API  →  http://localhost:${config.port}`);
   console.log(`   Environment : ${config.nodeEnv}`);
+  console.log(`   API docs    : http://localhost:${config.port}/api/docs`);
   console.log(`   DB endpoint : ${process.env.DATABASE_URL?.split("@")[1] ?? "local"}`);
 });
 

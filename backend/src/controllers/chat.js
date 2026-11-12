@@ -138,137 +138,37 @@ export async function chat(req, res) {
  * If getAnswer doesn't support streaming, the full answer is chunked in ~20-word pieces.
  */
 export async function chatStream(req, res) {
-  const { question, sessionId: bodySessionId, equipmentType, useCache } =
-    chatSchema.parse(req.body);
-
+  const { question, sessionId: bodySessionId, equipmentType, useCache } = chatSchema.parse(req.body);
   let sessionId = bodySessionId;
-  let newSession = false;
-
-  if (!sessionId) {
-    const session = await prisma.chatSession.create({
-      data: { userId: req.user.id, title: "New Chat" },
-    });
-    sessionId = session.id;
-    newSession = true;
-  }
-
-  // Verify ownership before opening the SSE connection
+  if (!sessionId) sessionId = (await prisma.chatSession.create({ data: { userId: req.user.id, title: "New Chat" } })).id;
   await getOwnedSession(sessionId, req.user.id);
-
-  // ── Set up SSE headers ────────────────────────────────────────────────────
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
   res.flushHeaders();
-
-  // Helper to send one SSE event
-  const send = (payload) => {
-    if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify(payload)}\n\n`);
-    }
-  };
-
-  // Handle client disconnect
-  let clientGone = false;
-  req.on("close", () => {
-    clientGone = true;
-  });
-
+  let disconnected = false;
+  res.on("close", () => { if (!res.writableEnded) disconnected = true; });
+  const send = (event, data) => { if (!disconnected && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  send("meta", { sessionId });
   try {
-    // ── Cache check ─────────────────────────────────────────────────────────
-    const cacheKey = buildCacheKey(question, equipmentType ?? "");
-    const streamHistory = await loadHistory(sessionId);
-    const cached = useCache && streamHistory.length === 0 ? cacheGet(cacheKey) : null;
-
-    if (cached) {
-      // Stream the cached answer in word-sized chunks
-      const words = cached.answer.split(" ");
-      for (const word of words) {
-        if (clientGone) break;
-        send({ type: "token", content: word + " " });
-        await sleep(15); // small delay to simulate streaming
-      }
-      send({ type: "sources", sources: cached.sources });
-
-      // Persist messages even from cache
-      const [, assistantMsg] = await persistMessagesForStream(
-        sessionId,
-        question,
-        cached.answer,
-        cached.sources
-      );
-      await maybeAutoTitleStream(sessionId, question);
-
-      send({
-        type: "done",
-        intent: cached.intent,
-        messageId: assistantMsg.id,
-        sessionId,
-        cached: true,
-        ...(newSession ? { newSession: true } : {}),
-      });
-
-      res.end();
-      return;
-    }
-
-    // ── Live answer ─────────────────────────────────────────────────────────
-    const history = streamHistory;
-    const start = Date.now();
-    await prisma.message.create({ data: { sessionId, role: "USER", content: question } });
-    let result;
-    try { result = await getAnswer(question, history); }
-    catch { send({ type: "error", error: "AI service failed, please try again" }); res.status(502); res.end(); return; }
-    const { answer, sources, intent } = result;
-    const latencyMs = Date.now() - start;
-
-    console.log(
-      `[Stream] question="${question.slice(0, 60)}" intent=${intent} latency=${latencyMs}ms`
-    );
-
-    // Stream the answer in ~20-word chunks
-    const words = answer.split(" ");
-    const CHUNK_SIZE = 20;
-    for (let i = 0; i < words.length; i += CHUNK_SIZE) {
-      if (clientGone) break;
-      const chunk = words.slice(i, i + CHUNK_SIZE).join(" ") + " ";
-      send({ type: "token", content: chunk });
-      await sleep(30);
-    }
-
-    if (!clientGone) {
-      send({ type: "sources", sources });
-
-      // Persist
-      const [, assistantMsg] = await persistMessagesForStream(
-        sessionId,
-        question,
-        answer,
-        sources
-      );
-      await maybeAutoTitleStream(sessionId, question);
-
-      // Cache
-      if (history.length === 0) cacheSet(cacheKey, { answer, sources, intent });
-
-      send({
-        type: "done",
-        intent,
-        messageId: assistantMsg.id,
-        sessionId,
-        cached: false,
-        ...(newSession ? { newSession: true } : {}),
-      });
+    const result = await processChat(sessionId, req.user.id, question, {
+      useCache, equipmentType,
+      onAnswer: async ({ answer, sources, intent }) => {
+        for (let i = 0; i < answer.length; i += 30) {
+          if (disconnected) return false;
+          send("token", { text: answer.slice(i, i + 30) });
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        return !disconnected;
+      },
+    });
+    if (!disconnected) {
+      send("sources", { sources: result.sources, intent: result.intent, messageId: result.messageId });
+      send("done", {});
     }
   } catch (err) {
-    console.error("[Stream] Error:", err.message);
-    if (!clientGone && !res.writableEnded) {
-      send({ type: "error", error: err.message });
-    }
-  } finally {
-    if (!res.writableEnded) res.end();
-  }
+    if (!disconnected) send("error", { error: err.expose || process.env.NODE_ENV !== "production" ? err.message : "Internal server error" });
+  } finally { if (!res.writableEnded) res.end(); }
 }
 
 // ── Private stream helpers ────────────────────────────────────────────────────

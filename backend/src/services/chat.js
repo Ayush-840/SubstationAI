@@ -79,7 +79,7 @@ export async function autoTitleSession(sessionId, question) {
  * Returns { answer, sources, intent, messageId, sessionId, cached }
  */
 export async function processChat(sessionId, userId, question, options = {}) {
-  const { useCache = true, equipmentType = "" } = options;
+  const { useCache = true, equipmentType = "", onAnswer } = options;
 
   // ── Ownership check ───────────────────────────────────────────────────────
   await getOwnedSession(sessionId, userId);
@@ -90,6 +90,7 @@ export async function processChat(sessionId, userId, question, options = {}) {
   if (useCache && history.length === 0) {
     const cached = cacheGet(cacheKey);
     if (cached) {
+      if (onAnswer && !(await onAnswer(cached))) return { aborted: true };
       console.log(`[Chat] question="${question.slice(0, 60)}" latency=0ms cacheHit=true`);
       // Still persist the user message even when answer comes from cache
       const [userMsg] = await persistUserMessage(sessionId, question);
@@ -118,6 +119,7 @@ export async function processChat(sessionId, userId, question, options = {}) {
     throw err;
   }
   const { answer, sources, intent } = result;
+  if (onAnswer && !(await onAnswer({ answer, sources, intent }))) return { aborted: true };
   const latencyMs = Date.now() - start;
 
   console.log(

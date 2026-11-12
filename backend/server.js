@@ -3,6 +3,9 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
+import adminRoutes from "./src/routes/admin.js";
+import { requireAuth } from "./src/middleware/auth.js";
+import { requireRole } from "./src/middleware/role.js";
 
 import { config } from "./src/config.js";
 import { prisma } from "./src/db.js";
@@ -56,7 +59,7 @@ app.use("/api/equipment", equipmentRoutes);
 app.use("/api/tests",     testRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/chat",      chatRoutes);
-// app.use("/api/admin",  adminRoutes);  // Batch 4
+app.use("/api/admin", requireAuth, requireRole("ADMIN"), adminRoutes);
 
 // ── 404 + global error handler ────────────────────────────────────────────────
 app.use(notFound);

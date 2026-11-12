@@ -1,11 +1,11 @@
 /**
- * STUB — getAnswer.js
+ * STUB: Person 2 replaces this
  *
  * Contract:
  *   getAnswer(question: string, history: Array<{role:'user'|'assistant', content:string}>)
  *   -> Promise<{ answer: string, sources: Array<{title,page,snippet}>, intent: string }>
  *
- * Intent values: "procedure" | "limits" | "troubleshooting" | "general"
+ * Intent values: "procedure" | "limits" | "troubleshooting"
  *
  * To swap: in src/ai/index.js change the import line — nothing else changes.
  */
@@ -38,7 +38,7 @@ Refer to the relevant IS / IEC / IEEE standard listed below.
 - Ensure no personnel are in the danger zone during energization.
 - Follow the substation Safety Rule Book at all times.
 
-## Test Equipment Required
+## Test Equipment
 
 - Appropriate test instrument (Megger / Tan Delta set / DLRO / Timing analyzer).
 - Calibrated instruments with valid calibration certificates.

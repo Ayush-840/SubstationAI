@@ -75,3 +75,12 @@ export async function me(req, res) {
   res.json({ user: req.user });
 }
 
+
+export async function changePassword(req, res) {
+  const { currentPassword, newPassword } = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(6) }).parse(req.body);
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user || !(await bcrypt.compare(currentPassword, user.password))) { const err = new Error("Current password is incorrect"); err.status = 400; err.expose = true; throw err; }
+  const password = await bcrypt.hash(newPassword, 12);
+  await prisma.user.update({ where: { id: user.id }, data: { password } });
+  res.status(204).end();
+}

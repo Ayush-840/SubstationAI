@@ -7,13 +7,14 @@ async function main() {
   console.log("🌱 Seeding database...");
 
   // ── Admin user ──────────────────────────────────────────────────────────────
-  const adminPassword = await bcrypt.hash("Admin@1234", 12);
+  if (!process.env.ADMIN_PASSWORD) throw new Error("Set ADMIN_PASSWORD before seeding the admin user");
+  const adminPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
   const admin = await prisma.user.upsert({
-    where: { email: "admin@substationai.com" },
+    where: { email: process.env.ADMIN_EMAIL || "admin@substationai.com" },
     update: {},
     create: {
       name: "System Admin",
-      email: "admin@substationai.com",
+      email: process.env.ADMIN_EMAIL || "admin@substationai.com",
       password: adminPassword,
       role: "ADMIN",
     },
@@ -27,6 +28,9 @@ async function main() {
       description:
         "Power transformer used for voltage step-up/step-down in substations.",
     },
+    { name: "Power Transformer", description: "Power transformer used for voltage step-up/step-down in substations." },
+    { name: "Current Transformer", description: "Current transformer used for metering and protection." },
+    { name: "Potential Transformer", description: "Potential transformer used for metering and protection." },
     {
       name: "Reactor",
       description:
@@ -77,8 +81,7 @@ async function main() {
         "Repeat for LV winding to HV+Ground.",
         "Reconnect and record all readings in the test report.",
       ],
-      limits:
-        "IR (60s) ≥ 1000 MΩ at 20°C for 220kV class. Polarization Index (PI) ≥ 2.0 (> 1.5 acceptable). Derate by 50% per 10°C rise above 20°C using the formula: IR(corrected) = IR(measured) × 2^((T-20)/10).",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Obtain Line Clearance Certificate before starting.",
         "Ground all windings before and after the test to drain residual charge.",
@@ -114,8 +117,7 @@ async function main() {
         "Test in UST mode (Ungrounded Specimen Test) for each individual winding.",
         "Compare with factory test reports and previous maintenance records.",
       ],
-      limits:
-        "Tan Delta for HV winding ≤ 0.5% at 20°C for new transformers. ≤ 1.0% acceptable for aged units. Capacitance deviation > ±5% from baseline indicates insulation damage.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Confirm transformer is fully de-energized and discharged.",
         "Ground all un-tested terminals during measurement.",
@@ -142,8 +144,7 @@ async function main() {
         "Calculate Rogers Ratio and TDCG (Total Dissolved Combustible Gas).",
         "Compare with baseline and previous readings.",
       ],
-      limits:
-        "TDCG < 720 ppm: Normal. TDCG 720–1920 ppm: Caution, increase monitoring. TDCG > 1920 ppm: Immediate action. C2H2 > 2 ppm indicates arcing. CO > 500 ppm indicates cellulose degradation.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Use clean, sealed sampling equipment to avoid air contamination.",
         "Label sample with date, time, temperature, and load at sampling.",
@@ -171,8 +172,7 @@ async function main() {
         "Record IR15 and IR60 for PI calculation.",
         "Also test winding-to-core and core-to-ground.",
       ],
-      limits:
-        "IR ≥ 1000 MΩ at 20°C. PI ≥ 1.5. Similar derating applies as transformers.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Obtain clearance from grid operator before testing shunt reactors.",
         "Discharge the reactor winding before and after test.",
@@ -202,8 +202,7 @@ async function main() {
         "Repeat for all three phases.",
         "Compare with manufacturer spec and previous values.",
       ],
-      limits:
-        "Typically ≤ 50–100 μΩ per phase for 11kV–220kV breakers. Refer to manufacturer datasheet. A 20% rise from baseline warrants investigation.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Ensure breaker is in closed position and fully discharged.",
         "Confirm spring energy has been discharged before accessing contacts.",
@@ -235,8 +234,7 @@ async function main() {
         "Perform O-CO (open-close-open) sequence and record times.",
         "Record coil currents for trip and close coils.",
       ],
-      limits:
-        "Opening time: typically 25–60ms. Closing time: typically 50–100ms. Refer to manufacturer specs. Phase discrepancy ≤ 3ms.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Keep personnel clear of the breaker during operation.",
         "Ensure control supply is correct (110V DC or 220V DC).",
@@ -270,8 +268,7 @@ async function main() {
         "Record Tan Delta (%) and capacitance (pF).",
         "For CTs, test each section (C1, C2) separately.",
       ],
-      limits:
-        "Tan Delta ≤ 0.5% for CTs (oil-paper) at 20°C. ≤ 0.8% for PTs. For GIS-type: ≤ 0.2%. A rise of > 0.3% from baseline in one year warrants detailed investigation.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Never leave CT secondary open-circuited when primary is energized.",
         "Ground the CT secondary before disconnecting.",
@@ -304,8 +301,7 @@ async function main() {
         "Compare with factory test values and previous readings.",
         "Also perform IR test at 1kV: should be > 1000 MΩ.",
       ],
-      limits:
-        "Watts loss increase > 50% from baseline indicates MOV disc degradation. Resistive current IR increase > 20% from baseline is concerning. Capacitive/resistive current ratio should remain stable.",
+      limits: "Verify against the applicable standard/manual.",
       safety: [
         "Ensure complete isolation from line and ground before testing.",
         "Use HV-rated leads and connectors.",
@@ -322,6 +318,23 @@ async function main() {
     },
   ];
 
+
+  tests.push(
+    { equipmentId: createdEquipment["Power Transformer"].id, name: "Tan Delta Test (Power Transformer)", aliases: ["power transformer tan delta", "dissipation factor transformer", "winding power factor", "insulation DF", "capacitance DF"], steps: ["Isolate, lock out, and discharge the transformer.", "Disconnect external bus and cable connections as required.", "Ground tank and unused windings; configure test set per manufacturer.", "Measure winding-to-ground and inter-winding capacitance and dissipation factor.", "Record oil and winding temperatures, test voltage, capacitance, and readings.", "Compare with baseline and applicable maintenance guidance."], limits: "Verify against the applicable standard/manual.", safety: ["Apply approved isolation and grounding procedures.", "Keep personnel clear during voltage application.", "Discharge windings after every measurement."], tools: ["Capacitance and dissipation-factor test set", "Grounding leads", "Temperature meter"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check connections, surface contamination, temperature correction, and moisture indicators; consult manufacturer before further action." },
+    { equipmentId: createdEquipment["Power Transformer"].id, name: "Winding Resistance Test (Power Transformer)", aliases: ["transformer winding resistance", "DC resistance test", "winding ohms", "tap changer resistance", "phase resistance"], steps: ["Isolate and ground transformer, then verify dead.", "Connect a winding resistance instrument with correct polarity.", "Measure each phase and applicable tap position.", "Wait for readings to stabilize and record winding temperature.", "Demagnetize the core after testing.", "Compare phase and tap readings with baseline and manufacturer guidance."], limits: "Verify against the applicable standard/manual.", safety: ["Follow lockout and grounding procedure.", "Do not disconnect leads until stored inductive energy has discharged.", "Use barriers around energized test leads."], tools: ["Transformer winding resistance meter", "Temperature meter", "Grounding equipment"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Confirm lead contact and stabilization; investigate phase or tap variation using manufacturer procedures." },
+    { equipmentId: createdEquipment["Circuit Breaker"].id, name: "SF6 Gas Leak and Moisture Test", aliases: ["SF6 leak test", "gas dew point", "SF6 moisture", "gas quality test", "breaker gas test"], steps: ["Identify gas compartment and manufacturer sampling points.", "Check pressure and temperature against nameplate conditions.", "Inspect accessible joints with an approved leak detector.", "Take a representative gas sample using a clean closed system.", "Measure moisture/dew point with a calibrated analyzer.", "Record ambient conditions, compartment, and instrument details."], limits: "Verify against the applicable standard/manual.", safety: ["Follow SF6 handling and ventilation procedures.", "Use suitable PPE and prevent gas release.", "Avoid oxygen-deficient confined spaces."], tools: ["SF6 leak detector", "Moisture/dew-point analyzer", "Approved sampling kit"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check sampling connections and instrument calibration; inspect seals and valves before arranging approved gas handling." },
+    { equipmentId: createdEquipment["Circuit Breaker"].id, name: "Circuit Breaker SF6 Gas Quality Test", aliases: ["SF6 purity", "gas composition", "SF6 quality", "decomposition products", "breaker gas purity"], steps: ["Confirm correct compartment and sampling procedure.", "Verify gas analyzer calibration status.", "Purge sampling line as directed by analyzer instructions.", "Measure gas composition and decomposition indicators.", "Record pressure, temperature, compartment, and results.", "Compare results with equipment manual and applicable standard."], limits: "Verify against the applicable standard/manual.", safety: ["Use approved SF6 recovery equipment.", "Wear required PPE and provide ventilation.", "Do not vent gas intentionally."], tools: ["SF6 gas analyzer", "Closed-loop sampling kit", "PPE"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Repeat with verified sampling connections and analyzer calibration; investigate suspected contamination through qualified service." },
+    { equipmentId: createdEquipment["Current Transformer"].id, name: "CT Ratio and Polarity Test", aliases: ["CT ratio test", "current transformer polarity", "ratio polarity", "CT turns ratio", "CT primary injection"], steps: ["Isolate primary circuit and confirm CT secondary is safely shorted/grounded as required.", "Check nameplate ratio and terminal markings.", "Connect a CT analyzer or approved injection set.", "Measure ratio for each core and record polarity.", "Verify secondary wiring continuity and terminal identification.", "Compare results with nameplate and wiring drawings."], limits: "Verify against the applicable standard/manual.", safety: ["Never leave an energized CT secondary open circuit.", "Isolate primary circuit before connecting test leads.", "Ground secondary at the designated point."], tools: ["CT analyzer", "Primary injection set", "Test leads"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check lead polarity, terminal labels, shorting links, and secondary wiring before repeating." },
+    { equipmentId: createdEquipment["Current Transformer"].id, name: "CT Excitation (Knee Point) Test", aliases: ["CT knee point", "excitation curve", "magnetization test", "CT saturation test", "secondary excitation"], steps: ["Isolate CT primary and safely short/ground unused secondary cores.", "Connect analyzer to the selected CT secondary.", "Increase excitation in controlled steps per instrument procedure.", "Record voltage and current across the excitation curve.", "Stop at instrument or manufacturer specified endpoint.", "Demagnetize the core and compare curve with design data."], limits: "Verify against the applicable standard/manual.", safety: ["Prevent open-circuit hazards on any energized CT.", "Use controlled voltage ramp and barriers.", "Demagnetize the CT after the test."], tools: ["CT analyzer", "Secondary test leads", "PPE"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check secondary connections, winding continuity, and selected core; consult relay/protection design data." },
+    { equipmentId: createdEquipment["Potential Transformer"].id, name: "PT Insulation Resistance Test", aliases: ["PT IR test", "VT insulation resistance", "voltage transformer megger", "PT megger", "VT megger"], steps: ["Isolate primary and secondary circuits and verify dead.", "Discharge and ground the PT body.", "Disconnect sensitive secondary devices as required.", "Measure primary-to-ground and secondary-to-ground insulation.", "Record test voltage, duration, and ambient conditions.", "Discharge and restore all connections after testing."], limits: "Verify against the applicable standard/manual.", safety: ["Verify isolation on both primary and secondary sides.", "Ground and discharge between measurements.", "Protect connected relays and meters."], tools: ["Insulation resistance tester", "Grounding leads", "PPE"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Inspect bushings and terminal surfaces; verify disconnected devices and compare with temperature-corrected history." },
+    { equipmentId: createdEquipment["Potential Transformer"].id, name: "PT Ratio and Polarity Test", aliases: ["PT ratio test", "VT ratio test", "voltage transformer polarity", "PT turns ratio", "VT polarity"], steps: ["Isolate PT and disconnect external secondary loads as specified.", "Verify nameplate ratio and terminal markings.", "Connect an approved ratio test instrument.", "Measure ratio and polarity for each winding/tap.", "Record readings and confirm secondary phase identification.", "Compare with nameplate and drawings."], limits: "Verify against the applicable standard/manual.", safety: ["Confirm isolation and absence of backfeed.", "Use fused test leads where required.", "Ground the instrument transformer body."], tools: ["Transformer turns ratio tester", "Fused test leads", "Drawings"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check test-lead polarity, tap selection, and wiring drawings before repeating." },
+    { equipmentId: createdEquipment["Surge Arrester"].id, name: "Third Harmonic Resistive Current Test", aliases: ["third harmonic test", "3rd harmonic resistive current", "arrester resistive leakage", "MOV harmonic current", "surge arrester IR current"], steps: ["Record arrester identity, counter, ambient conditions, and service history.", "Use an approved online monitor or isolated test arrangement.", "Connect calibrated leakage-current instrument as specified.", "Measure total and resistive leakage components including third harmonic.", "Repeat readings as required to confirm stability.", "Compare with baseline and manufacturer guidance."], limits: "Verify against the applicable standard/manual.", safety: ["Online testing must use rated non-contact instruments and approved procedures.", "Do not approach exposed live terminals.", "De-energize before any direct connection."], tools: ["Arrester leakage-current analyzer", "Calibrated clamp sensor", "PPE"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check sensor orientation, phase reference, harmonics, and surface contamination; refer abnormal trends to manufacturer." },
+    { equipmentId: createdEquipment["Reactor"].id, name: "Winding Resistance Test (Reactor)", aliases: ["reactor winding resistance", "reactor DC resistance", "reactor ohmic test", "shunt reactor resistance", "series reactor resistance"], steps: ["Isolate reactor and apply lockout/tagout.", "Discharge and ground winding before connection.", "Connect winding resistance instrument to each phase.", "Record stable readings and winding temperature.", "Discharge stored energy and demagnetize if required.", "Compare phases and historical readings per manufacturer guidance."], limits: "Verify against the applicable standard/manual.", safety: ["Wait for complete discharge before touching connections.", "Do not break current-injection leads while energized.", "Maintain isolation from connected system."], tools: ["Winding resistance meter", "Grounding equipment", "Temperature meter"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check lead resistance and contact pressure; investigate phase differences with manufacturer procedures." },
+    { equipmentId: createdEquipment["Reactor"].id, name: "Reactor Inductance and Capacitance Check", aliases: ["reactor inductance test", "reactor capacitance", "phase impedance test", "shunt reactor impedance", "reactance measurement"], steps: ["Isolate, discharge, and ground the reactor.", "Record nameplate details and tap position.", "Connect a calibrated impedance or inductance test instrument.", "Measure each phase using the specified configuration.", "Record applied frequency, connections, and environmental conditions.", "Compare results with factory data and applicable guidance."], limits: "Verify against the applicable standard/manual.", safety: ["Confirm reactor is isolated from all sources.", "Discharge winding after each measurement.", "Use instrument leads rated for the test setup."], tools: ["LCR/impedance analyzer", "Test leads", "Grounding equipment"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Verify tap position, lead arrangement, and test frequency before evaluating phase variation." },
+
+      { equipmentId: createdEquipment["Surge Arrester"].id, name: "Surge Arrester Leakage Current Measurement", aliases: ["arrester leakage current", "total leakage current", "MOV leakage", "arrester current test", "leakage current monitoring"], steps: ["Record arrester identification, service history, and ambient conditions.", "Select approved online or offline test procedure for the arrester design.", "Connect calibrated leakage-current instrument using manufacturer instructions.", "Measure total leakage current and record voltage and environmental conditions.", "Repeat measurements to confirm stability and phase consistency.", "Compare trend with baseline and applicable equipment guidance."], limits: "Verify against the applicable standard/manual.", safety: ["Use approved rated instruments for energized measurements.", "Maintain safe approach distances and barriers.", "De-energize and ground before direct connections."], tools: ["Leakage-current analyzer", "Calibrated current sensor", "PPE"], standard: "Verify against the applicable standard/manual.", troubleshooting: "Check sensor positioning, instrument calibration, surface contamination, and operating voltage before interpreting trend." },
+  );
+
   for (const test of tests) {
     // Upsert by equipmentId + name combination
     const existing = await prisma.test.findFirst({
@@ -337,7 +350,7 @@ async function main() {
   }
 
   console.log("\n🎉 Seeding complete!");
-  console.log("   Admin login: admin@substationai.com / Admin@1234");
+  console.log(`   Admin login email: ${process.env.ADMIN_EMAIL || "admin@substationai.com"} (password configured via ADMIN_PASSWORD)`);
 }
 
 main()

@@ -63,7 +63,10 @@ app.use(notFound);
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────────────────────────
+const recoverStuckDocuments = async () => prisma.document.updateMany({ where: { status: "PROCESSING" }, data: { status: "FAILED", error: "Server restarted during processing" } });
+
 const server = app.listen(config.port, () => {
+  recoverStuckDocuments().catch((err) => console.error("Document recovery failed:", err.message));
   console.log(`🚀 SubstationAI API  →  http://localhost:${config.port}`);
   console.log(`   Environment : ${config.nodeEnv}`);
   console.log(`   DB endpoint : ${process.env.DATABASE_URL?.split("@")[1] ?? "local"}`);

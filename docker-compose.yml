@@ -1,90 +1,24 @@
+version: "3.9"
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    container_name: substationai_postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: substation
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-substation}
-      POSTGRES_DB: substationiq
+      POSTGRES_USER: substationai
+      POSTGRES_PASSWORD: substationai_secret
+      POSTGRES_DB: substationai
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U substation -d substationiq"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U substationai -d substationai"]
+      interval: 10s
       timeout: 5s
-      retries: 10
-
-  mongo:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodata:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-
-  backend:
-    build:
-      context: ./backend
-      args:
-        INSTALL_HEAVY: ${INSTALL_HEAVY:-false}
-    env_file: .env
-    environment:
-      - DATABASE_URL=postgresql://substation:${POSTGRES_PASSWORD:-substation}@postgres:5432/substationiq
-      - MONGO_URL=mongodb://mongo:27017
-      - MONGO_DB=substationiq
-      - REDIS_URL=redis://redis:6379/0
-      - CHROMA_PATH=/app/data/chroma
-      - FRONTEND_URL=http://localhost:5173
-      - CORS_ALLOW_ORIGINS=http://localhost:5173
-      - APP_ENV=development
-      - SEED_DEMO_USERS=true
-    depends_on:
-      postgres:
-        condition: service_healthy
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8000:8000"
-    volumes:
-      - chroma-data:/app/data
-      - ./data/catalog:/app/data/catalog
-      - ./data/raw_docs:/app/data/raw_docs
-    command: >
-      sh -c "alembic upgrade head &&
-             python -m app.scripts.seed &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
-
-  frontend:
-    build: ./frontend
-    environment:
-      VITE_API_URL: http://localhost:8000
-    depends_on:
-      - backend
-    ports:
-      - "5173:5173"
+      retries: 5
 
 volumes:
   pgdata:
-  mongodata:
-  redisdata:
-  chroma-data:
+

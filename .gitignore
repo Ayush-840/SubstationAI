@@ -1,31 +1,30 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-.pytest_cache/
-.ruff_cache/
-
-# Databases / vector store
-*.db
-*.sqlite3
-data/chroma/
-
-# Node
+# Dependencies
 node_modules/
-dist/
-*.local
 
-# Env
+# Environment
 .env
+*.env.local
+
+# Build
+dist/
+build/
+
+# Uploads (don't commit user files)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Prisma
+backend/prisma/migrations/*/migration_lock.toml
+
+# Logs
+*.log
+npm-debug.log*
 
 # OS
 .DS_Store
+Thumbs.db
 
-# Test / build artifacts
-.coverage
-htmlcov/
+# IDE
+.vscode/
+.idea/
 
-# Runtime logs
-*.log

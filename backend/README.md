@@ -9,12 +9,14 @@ Node.js, Express, PostgreSQL (Neon compatible), Prisma, JWT, bcrypt, Zod, Helmet
 ## Setup
 
 1. Clone the repository and `cd backend`.
-2. Run `npm install`.
-3. Copy `.env.example` to `.env` and set values.
-4. Run `npx prisma migrate deploy`.
-5. Run `npx prisma generate`.
-6. Run `npm run seed`.
-7. Run `npm run dev`.
+2. Use PostgreSQL with the `pgvector` extension available (a local PostgreSQL install or Neon works).
+3. Run `npm install`.
+4. Copy `.env.example` to `.env` and set values.
+5. Enable pgvector on the target database with `psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS vector;'` (use a database owner/admin account if the app role cannot install extensions).
+6. Run `npx prisma migrate deploy`.
+7. Run `npx prisma generate`.
+8. Run `npm run seed`.
+9. Run `npm run dev`.
 
 Interactive API docs: `http://localhost:4000/api/docs`; health check: `http://localhost:4000/api/health`.
 

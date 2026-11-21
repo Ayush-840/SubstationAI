@@ -16,17 +16,18 @@ export const generalLimiter = rateLimit({
 /** Stricter limiter for auth routes */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 20,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   handler: json429,
-  message: { error: "Too many auth attempts, please try again in 15 minutes" },
+  
 });
 
 /** Chat limiter — 60 messages per 15 min per IP */
 export const chatLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 60,
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user?.id || req.ip,
   standardHeaders: true,
   legacyHeaders: false,
   handler: json429,

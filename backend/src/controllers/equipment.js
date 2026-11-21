@@ -72,6 +72,6 @@ export async function updateEquipment(req, res) {
 /** DELETE /api/equipment/:id  (ADMIN) */
 export async function deleteEquipment(req, res) {
   await prisma.equipment.delete({ where: { id: req.params.id } });
-  res.json({ message: "Equipment deleted" });
+  res.status(204).end();
 }
 

@@ -17,7 +17,7 @@ const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
 const REFRESH_KEY = 'siq_refresh'
 const USER_KEY = 'siq_user'
 
-export type StoredUser = { id: number; name: string; email: string; role: string }
+export type StoredUser = { id: number | string; name: string; email: string; role: string }
 
 let accessToken: string | null = null
 

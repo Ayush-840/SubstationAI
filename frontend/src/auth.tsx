@@ -45,6 +45,21 @@ interface TokenPair {
 }
 
 type LoginResponse = TokenPair & { mfa_required?: boolean; mfa_token?: string }
+type BackendLoginResponse = {
+  token: string
+  user: { id: string; name: string; email: string; role: 'ADMIN' | 'ENGINEER' }
+  mfa_required?: boolean
+  mfa_token?: string
+}
+
+function normalizeBackendUser(user: BackendLoginResponse['user']): User {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role === 'ADMIN' ? 'admin' : 'engineer',
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasSavedSession = Boolean(getRefreshToken())
@@ -89,7 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     setLoading(true)
     try {
-      const res = await api.post<LoginResponse>('/api/auth/login', { email, password })
+      const res = await api.post<LoginResponse | BackendLoginResponse>('/api/auth/login', { email, password })
       if (res?.mfa_required && res.mfa_token) {
         // Second factor needed: no tokens yet — park the challenge and let the
         // caller show the code form. Drop any previous session on purpose.
@@ -97,11 +112,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setMfaToken(res.mfa_token)
         return 'mfa'
       }
-      setSession(res)
-      const me = await api.get<User>('/api/auth/me')
-      setStoredUser(me)
-      setUser(me)
-      return 'ok'
+      if ('access_token' in res) {
+        setSession(res)
+        const me = await api.get<User>('/api/auth/me')
+        setStoredUser(me)
+        setUser(me)
+        return 'ok'
+      }
+      if ('token' in res && res.user) {
+        setSession({ access_token: res.token })
+        const user = normalizeBackendUser(res.user)
+        setStoredUser(user)
+        setUser(user)
+        return 'ok'
+      }
+      throw new Error('The server returned an unsupported login response.')
     } catch (err) {
       setSession(null)
       throw err

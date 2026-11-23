@@ -1,0 +1,13 @@
+flowchart LR
+    Browser[React frontend]
+    Routes[Express routes and middleware]
+    Controllers[Controllers and services]
+    Prisma[Prisma Client]
+    DB[(PostgreSQL)]
+    Seed[Prisma seed data]
+
+    Browser -->|HTTP /api| Routes
+    Routes --> Controllers
+    Controllers --> Prisma
+    Prisma -->|SQL / transactions / constraints| DB
+    Seed -->|upsert / check-before-create| Prisma

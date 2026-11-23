@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1020" viewBox="0 0 1600 1020" role="img" aria-labelledby="title desc">
+  <title id="title">SubstationAI PostgreSQL entity relationship diagram</title>
+  <desc id="desc">Seven tables connected by one-to-many relationships: User to ChatSession to Message, Equipment to Test, and Document to DocumentChunk.</desc>
+  <defs>
+    <linearGradient id="header" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#123451"/><stop offset="1" stop-color="#176b78"/></linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#123451" flood-opacity=".12"/></filter>
+    <style>
+      .bg{fill:#f4f8fb}.title{font:700 34px system-ui,sans-serif;fill:#123451}.sub{font:16px system-ui,sans-serif;fill:#567080}
+      .box{fill:white;stroke:#c9d8e2;stroke-width:2;rx:14;filter:url(#shadow)}.head{fill:url(#header);rx:14}.headcover{fill:url(#header)}
+      .entity{font:700 19px system-ui,sans-serif;fill:white}.field{font:15px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#263e50}.key{font-weight:700;fill:#147985}
+      .edge{fill:none;stroke:#197887;stroke-width:3}.edge2{fill:none;stroke:#9ab2c0;stroke-width:2.5;stroke-dasharray:8 7}.rel{font:600 13px system-ui,sans-serif;fill:#176b78}.note{font:14px system-ui,sans-serif;fill:#567080}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#197887"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="1020"/>
+  <text class="title" x="56" y="55">SubstationAI · PostgreSQL data model</text>
+  <text class="sub" x="56" y="84">Prisma models mapped to seven relational tables · UUID primary keys · one-to-many relationships</text>
+
+  <!-- Relationship connectors behind entities -->
+  <path class="edge" d="M450 205 H535" marker-end="url(#arrow)"/><text class="rel" x="462" y="193">1 : 0..N</text>
+  <path class="edge" d="M930 205 H1015" marker-end="url(#arrow)"/><text class="rel" x="942" y="193">1 : 0..N</text>
+  <path class="edge" d="M450 685 H535" marker-end="url(#arrow)"/><text class="rel" x="462" y="673">1 : 0..N</text>
+  <path class="edge" d="M1015 685 H930" marker-end="url(#arrow)"/><text class="rel" x="940" y="673">1 : 0..N</text>
+  <text class="note" x="1060" y="765">One document owns its extracted chunks.</text>
+  <text class="note" x="1060" y="788">Chunk embeddings are reserved for future RAG use.</text>
+
+  <!-- users -->
+  <g transform="translate(55 125)"><rect class="box" width="395" height="310"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">users</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan></text><text class="field" x="22" y="116">name · text</text><text class="field" x="22" y="150"><tspan class="key">UQ</tspan><tspan dx="12">email · text</tspan></text><text class="field" x="22" y="184">password · hash</text><text class="field" x="22" y="218">role · enum</text><text class="field" x="22" y="252">createdAt · timestamp</text>
+  </g>
+  <!-- chat_sessions -->
+  <g transform="translate(535 125)"><rect class="box" width="395" height="250"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">chat_sessions</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan></text><text class="field" x="22" y="116"><tspan class="key">FK</tspan><tspan dx="12">userId → users.id</tspan></text><text class="field" x="22" y="150">title · text</text><text class="field" x="22" y="184">createdAt · timestamp</text>
+  </g>
+  <!-- messages -->
+  <g transform="translate(1015 125)"><rect class="box" width="395" height="310"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">messages</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan></text><text class="field" x="22" y="116"><tspan class="key">FK</tspan><tspan dx="12">sessionId → chat_sessions.id</tspan></text><text class="field" x="22" y="150">role · enum</text><text class="field" x="22" y="184">content · text</text><text class="field" x="22" y="218">sources · JSONB, nullable</text><text class="field" x="22" y="252">createdAt · timestamp</text>
+  </g>
+  <!-- equipment -->
+  <g transform="translate(55 555)"><rect class="box" width="395" height="230"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">equipment</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan></text><text class="field" x="22" y="116"><tspan class="key">UQ</tspan><tspan dx="12">name · text</tspan></text><text class="field" x="22" y="150">description · text, nullable</text>
+  </g>
+  <!-- tests -->
+  <g transform="translate(535 555)"><rect class="box" width="395" height="330"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">tests</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan></text><text class="field" x="22" y="116"><tspan class="key">FK</tspan><tspan dx="12">equipmentId → equipment.id</tspan></text><text class="field" x="22" y="150">name · text</text><text class="field" x="22" y="184">aliases · text[]</text><text class="field" x="22" y="218">steps · text[]</text><text class="field" x="22" y="252">limits, standard · nullable</text><text class="field" x="22" y="286">safety[], tools[]</text>
+  </g>
+  <!-- documents -->
+  <g transform="translate(1015 555)"><rect class="box" width="395" height="230"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">documents</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan></text><text class="field" x="22" y="116">title, filePath · text</text><text class="field" x="22" y="150">status · enum</text><text class="field" x="22" y="184">uploadedAt · timestamp</text>
+  </g>
+  <!-- document_chunks -->
+  <g transform="translate(1015 835)"><rect class="box" width="395" height="150"/><rect class="head" width="395" height="48"/><rect class="headcover" x="0" y="25" width="395" height="23"/><text class="entity" x="20" y="31">document_chunks</text>
+    <text class="field" x="22" y="82"><tspan class="key">PK</tspan><tspan dx="12">id · UUID</tspan><tspan dx="18" class="key">FK</tspan><tspan dx="10">documentId</tspan></text><text class="field" x="22" y="116">content, page, metadata, vector(768)?</text>
+  </g>
+  <path class="edge2" d="M1210 785 V835" marker-end="url(#arrow)"/>
+  <text class="note" x="55" y="950">FKs cascade on parent deletion. Unique constraints: users.email, equipment.name. Required fields are NOT NULL.</text>
+</svg>

@@ -1,0 +1,64 @@
+erDiagram
+    USER ||--o{ CHAT_SESSION : owns
+    CHAT_SESSION ||--o{ MESSAGE : contains
+    EQUIPMENT ||--o{ TEST : has
+    DOCUMENT ||--o{ DOCUMENT_CHUNK : contains
+
+    USER {
+        UUID id PK
+        String name
+        String email UK
+        String password_hash
+        Role role
+        DateTime createdAt
+    }
+
+    CHAT_SESSION {
+        UUID id PK
+        UUID userId FK
+        String title
+        DateTime createdAt
+    }
+
+    MESSAGE {
+        UUID id PK
+        UUID sessionId FK
+        MessageRole role
+        String content
+        JSON sources
+        DateTime createdAt
+    }
+
+    EQUIPMENT {
+        UUID id PK
+        String name UK
+        String description
+    }
+
+    TEST {
+        UUID id PK
+        UUID equipmentId FK
+        String name
+        StringArray aliases
+        StringArray steps
+        String limits
+        StringArray safety
+        StringArray tools
+        String standard
+    }
+
+    DOCUMENT {
+        UUID id PK
+        String title
+        String filePath
+        DocumentStatus status
+        DateTime uploadedAt
+    }
+
+    DOCUMENT_CHUNK {
+        UUID id PK
+        UUID documentId FK
+        String content
+        Integer page
+        Vector embedding
+    }

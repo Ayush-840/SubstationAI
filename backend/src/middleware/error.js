@@ -49,6 +49,8 @@ export function errorHandler(err, req, res, next) {
     return res.status(400).json({ error: "Related record not found" });
   }
 
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "Request body too large" });
+
   // ── Multer: file too large ────────────────────────────────────────────────
   if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({ error: "File too large" });
@@ -63,7 +65,9 @@ export function errorHandler(err, req, res, next) {
 
   // ── Custom HTTP errors (err.status set by our code) ───────────────────────
   if (err.status && typeof err.status === "number") {
-    return res.status(err.status).json({ error: err.message });
+    return res.status(err.status).json({
+      error: err.expose || process.env.NODE_ENV !== "production" ? err.message : "Internal server error",
+    });
   }
 
   // ── Fallback 500 ─────────────────────────────────────────────────────────

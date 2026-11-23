@@ -1,0 +1,145 @@
+Q01 — Current record counts
+ users | equipment | tests | documents | chat_sessions | messages
+-------+-----------+-------+-----------+---------------+----------
+     1 |         8 |    20 |         0 |             0 |        0
+(1 row)
+
+Q02 — Safe admin lookup for authentication demo (no password hash selected)
+     name     |         email          | role
+--------------+------------------------+-------
+ System Admin | admin@substationai.com | ADMIN
+(1 row)
+
+Q03 — Browse equipment alphabetically
+          name          |                                              description
+------------------------+--------------------------------------------------------------------------------------------------------
+ Circuit Breaker        | Switching device capable of making, carrying, and breaking currents under normal and fault conditions.
+ Current Transformer    | Current transformer used for metering and protection.
+ Instrument Transformer | Current Transformer (CT) and Potential Transformer (PT) used for metering and protection.
+ Potential Transformer  | Potential transformer used for metering and protection.
+ Power Transformer      | Power transformer used for voltage step-up/step-down in substations.
+ Reactor                | Shunt/series reactor used for reactive power compensation and voltage control.
+ Surge Arrester         | Device that protects equipment from lightning and switching surges.
+ Transformer            | Power transformer used for voltage step-up/step-down in substations.
+(8 rows)
+
+Q04 — Read equipment and its related tests (main relationship join)
+       equipment        |                 test                 |                     limits
+------------------------+--------------------------------------+------------------------------------------------
+ Circuit Breaker        | Circuit Breaker SF6 Gas Quality Test | Verify against the applicable standard/manual.
+ Circuit Breaker        | Contact Resistance Test              | Verify against the applicable standard/manual.
+ Circuit Breaker        | SF6 Gas Leak and Moisture Test       | Verify against the applicable standard/manual.
+ Circuit Breaker        | Timing Test                          | Verify against the applicable standard/manual.
+ Current Transformer    | CT Excitation (Knee Point) Test      | Verify against the applicable standard/manual.
+ Current Transformer    | CT Ratio and Polarity Test           | Verify against the applicable standard/manual.
+ Instrument Transformer | Tan Delta Test                       | Verify against the applicable standard/manual.
+ Potential Transformer  | PT Insulation Resistance Test        | Verify against the applicable standard/manual.
+ Potential Transformer  | PT Ratio and Polarity Test           | Verify against the applicable standard/manual.
+ Power Transformer      | Tan Delta Test (Power Transformer)   | Verify against the applicable standard/manual.
+(10 rows)
+
+Q05 — Search procedure names for transformer-related tests
+       equipment        |                    test
+------------------------+---------------------------------------------
+ Current Transformer    | CT Excitation (Knee Point) Test
+ Current Transformer    | CT Ratio and Polarity Test
+ Instrument Transformer | Tan Delta Test
+ Potential Transformer  | PT Insulation Resistance Test
+ Potential Transformer  | PT Ratio and Polarity Test
+ Power Transformer      | Tan Delta Test (Power Transformer)
+ Power Transformer      | Winding Resistance Test (Power Transformer)
+ Transformer            | Dissolved Gas Analysis (DGA)
+ Transformer            | Insulation Resistance (IR) Test
+ Transformer            | Tan Delta (Dissipation Factor) Test
+(10 rows)
+
+Q06 — Search test names and aliases for megger/IR procedures
+       equipment       |                 test
+-----------------------+---------------------------------------
+ Circuit Breaker       | Circuit Breaker SF6 Gas Quality Test
+ Potential Transformer | PT Insulation Resistance Test
+ Reactor               | Insulation Resistance (IR) Test
+ Surge Arrester        | Third Harmonic Resistive Current Test
+ Transformer           | Insulation Resistance (IR) Test
+(5 rows)
+
+Q07 — Aggregate: number of tests per equipment
+       equipment        | test_count
+------------------------+------------
+ Circuit Breaker        |          4
+ Reactor                |          3
+ Surge Arrester         |          3
+ Transformer            |          3
+ Current Transformer    |          2
+ Potential Transformer  |          2
+ Power Transformer      |          2
+ Instrument Transformer |          1
+(8 rows)
+
+Q08 — HAVING: equipment with at least two procedures
+       equipment       | test_count
+-----------------------+------------
+ Circuit Breaker       |          4
+ Reactor               |          3
+ Surge Arrester        |          3
+ Transformer           |          3
+ Current Transformer   |          2
+ Potential Transformer |          2
+ Power Transformer     |          2
+(7 rows)
+
+Q09 — Subquery: equipment whose test count is above the average per equipment
+    equipment    | test_count
+-----------------+------------
+ Circuit Breaker |          4
+ Reactor         |          3
+ Surge Arrester  |          3
+ Transformer     |          3
+(4 rows)
+
+Q10 — Document ingestion status dashboard (empty until PDFs are uploaded)
+ status | document_count
+--------+----------------
+(0 rows)
+
+Q11 — Chat activity per user (left joins keep users with no sessions)
+         email          | sessions | messages
+------------------------+----------+----------
+ admin@substationai.com |        0 |        0
+(1 row)
+
+Q12 — INSERT, UPDATE, DELETE demo; all changes are rolled back at the end
+BEGIN
+INSERT 0 1
+Inserted temporary row: DE Viva Temporary Equipment (id 5e42e134-c426-4e5e-b653-dfe433c19eea)
+            name             |                 description
+-----------------------------+----------------------------------------------
+ DE Viva Temporary Equipment | Updated inside the demonstration transaction
+(1 row)
+
+UPDATE 1
+            name
+-----------------------------
+ DE Viva Temporary Equipment
+(1 row)
+
+DELETE 1
+ROLLBACK
+The CRUD demo transaction was rolled back; no demonstration row remains.
+Q13 — UNIQUE constraint demonstration (expected rejection; no row is added)
+psql:../db/05-project-queries.sql:121: NOTICE:  Expected result: duplicate equipment name rejected by UNIQUE constraint
+DO
+Q14 — Foreign-key validation demonstration (expected rejection; no row is added)
+psql:../db/05-project-queries.sql:139: NOTICE:  Expected result: test rejected because its equipment row does not exist
+DO
+Q15 — Existing indexes supporting unique lookups and primary keys
+   tablename   |     indexname      |                                    indexdef
+---------------+--------------------+---------------------------------------------------------------------------------
+ chat_sessions | chat_sessions_pkey | CREATE UNIQUE INDEX chat_sessions_pkey ON public.chat_sessions USING btree (id)
+ equipment     | equipment_name_key | CREATE UNIQUE INDEX equipment_name_key ON public.equipment USING btree (name)
+ equipment     | equipment_pkey     | CREATE UNIQUE INDEX equipment_pkey ON public.equipment USING btree (id)
+ messages      | messages_pkey      | CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (id)
+ tests         | tests_pkey         | CREATE UNIQUE INDEX tests_pkey ON public.tests USING btree (id)
+ users         | users_email_key    | CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)
+ users         | users_pkey         | CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)
+(7 rows)

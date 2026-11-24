@@ -29,9 +29,32 @@ if (config.nodeEnv === "production") app.set("trust proxy", 1);
 
 // ── Security + parsing ────────────────────────────────────────────────────────
 app.use(helmet());
+
+// CORS: the stable Vercel production alias + every preview deployment of the
+// same project, plus anything explicitly listed in CORS_ALLOW_ORIGINS.
+const allowedOrigins = new Set(
+  [
+    config.clientUrl,
+    ...(process.env.CORS_ALLOW_ORIGINS || "").split(","),
+    ...(process.env.FRONTEND_URL || "").split(","),
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+const corsRegex = process.env.CORS_ALLOW_ORIGIN_REGEX
+  ? new RegExp(process.env.CORS_ALLOW_ORIGIN_REGEX)
+  : null;
+const projectPreview = /^https:\/\/frontend-[a-z0-9-]*ayush-840s-projects\.vercel\.app$/;
+
 app.use(
   cors({
-    origin: config.clientUrl,
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // server-to-server, curl, health checks
+      if (allowedOrigins.has(origin) || projectPreview.test(origin) || corsRegex?.test(origin)) {
+        return cb(null, true);
+      }
+      return cb(new Error(`CORS blocked origin: ${origin}`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],

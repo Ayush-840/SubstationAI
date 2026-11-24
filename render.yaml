@@ -36,9 +36,9 @@ services:
   - key: GOOGLE_CLIENT_ID
     sync: false
   - key: FRONTEND_URL
-    value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+    value: https://frontend-ayush-840s-projects.vercel.app
   - key: CORS_ALLOW_ORIGINS
-    value: https://frontend-h8ikkpyfy-ayush-840s-projects.vercel.app
+    value: https://frontend-ayush-840s-projects.vercel.app
   - key: CORS_ALLOW_ORIGIN_REGEX
     value: https://frontend-[a-z0-9-]*ayush-840s-projects\.vercel\.app
   - fromDatabase:
@@ -76,7 +76,7 @@ services:
     value: '25'
   - key: LOG_LEVEL
     value: INFO
-  healthCheckPath: /health
+  healthCheckPath: /api/health
   name: substationiq-api
   plan: free
   runtime: docker

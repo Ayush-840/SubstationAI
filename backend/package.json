@@ -11,6 +11,7 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "node prisma/seed.js",
+    "db:seed:xr": "node prisma/seed-xr.js",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force",
     "seed": "node prisma/seed.js"

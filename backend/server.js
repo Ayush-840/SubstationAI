@@ -20,6 +20,7 @@ import equipmentRoutes from "./src/routes/equipment.js";
 import testRoutes      from "./src/routes/tests.js";
 import documentRoutes  from "./src/routes/documents.js";
 import chatRoutes      from "./src/routes/chat.js";
+import xrRoutes        from "./src/routes/xr.js";
 // Batch 4+
 // import adminRoutes  from "./src/routes/admin.js";
 
@@ -63,6 +64,7 @@ app.use("/api/equipment", equipmentRoutes);
 app.use("/api/tests",     testRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/chat",      chatRoutes);
+app.use("/api/xr",        xrRoutes);
 app.use("/api/admin", requireAuth, requireRole("ADMIN"), adminRoutes);
 
 // ── 404 + global error handler ────────────────────────────────────────────────

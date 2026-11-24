@@ -74,6 +74,8 @@ export class ApiError extends Error {
 export function formatError(body: any, status: number, fallback: string): string {
   const d = body?.detail ?? body?.error?.message ?? body?.message
   if (typeof d === 'string' && d.trim()) return d
+  // Node/Express API returns { error: "message" }.
+  if (typeof body?.error === 'string' && body.error.trim()) return body.error
   if (Array.isArray(d) && d.length) {
     // FastAPI/Pydantic 422: [{loc:[..,'password'], msg:'Value error, ...'}]
     return d

@@ -1,4 +1,4 @@
-import { useState, useContext, createContext, useEffect } from 'react'
+import { lazy, Suspense, useState, useContext, createContext, useEffect } from 'react'
 import { useAuth } from './auth'
 import { useTheme, type Theme } from './hooks/useTheme'
 import { Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -23,11 +23,15 @@ import Catalog from './pages/Catalog'
 import TestDetail from './pages/TestDetail'
 import CatalogEditor from './pages/CatalogEditor'
 
-type Tab = 'chat' | 'procedures' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'catalog' | 'dev-components' | 'catalog-editor' | 'account'
+// The 3D stack is a separate chunk: the login page never downloads three.js.
+const XrTrainer = lazy(() => import('./pages/XrTrainer'))
+
+type Tab = 'chat' | 'procedures' | 'xr' | 'diagnosis' | 'dga' | 'learn' | 'history' | 'admin' | 'result-checker' | 'catalog' | 'dev-components' | 'catalog-editor' | 'account'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'chat', label: 'Ask' },
   { id: 'procedures', label: 'Procedures' },
+  { id: 'xr', label: 'XR Trainer' },
   { id: 'diagnosis', label: 'Diagnose' },
   { id: 'dga', label: 'DGA' },
   { id: 'learn', label: 'Learn' },
@@ -42,6 +46,7 @@ const TABS: { id: Tab; label: string }[] = [
 const TAB_PATHS: Record<Tab, string> = {
   chat: '/chat',
   procedures: '/procedures',
+  xr: '/xr',
   diagnosis: '/diagnosis',
   dga: '/dga',
   learn: '/learn',
@@ -352,6 +357,14 @@ export default function App() {
         <Route path="catalog" element={<Catalog />} />
         <Route path="catalog/tests/:testId" element={<TestDetail />} />
         <Route path="procedures" element={<Procedures />} />
+        <Route
+          path="xr"
+          element={
+            <Suspense fallback={<p style={{ color: 'var(--muted)' }}>Loading 3D trainer…</p>}>
+              <XrTrainer />
+            </Suspense>
+          }
+        />
         <Route path="diagnosis" element={<Diagnosis />} />
         <Route path="dga" element={<DGA />} />
         <Route path="learn" element={<Learn />} />

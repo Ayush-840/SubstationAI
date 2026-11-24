@@ -397,6 +397,46 @@ Full list in [docs/TRD.md](docs/TRD.md#6-api-specification).
 
 `limit_value` is `value_text + unit`; `source` names the matched condition. The server never invents a numeric verdict for a qualitative limit.
 
+## XR Trainer (3D / AR / VR)
+
+`/xr` is a lazy-loaded three.js scene built on React Three Fiber and `@react-three/xr`.
+A trainee isolates the transformer, closes the earth switch, connects the megger leads,
+runs an insulation-resistance test and gets a PASS/MARGINAL/FAIL verdict from the same
+catalog limits the chatbot uses.
+
+- **Procedure engine** — `frontend/src/xr/engine.ts` is a pure reducer (step order, device
+  interlocks, violations, score) so it runs without WebGL and is unit-tested.
+- **Safety gate** — the earth switch refuses to close while the isolator is closed, and
+  vice versa; a breach is rejected and recorded without moving the device.
+- **Megger** — `frontend/src/xr/megger.ts` models `R(t) = R∞·(1 − k·e^(−t/τ))`, computes
+  R1, R10 and PI = R10/R1, and applies the catalog limits. All numbers are sample data.
+- **Live zones** — translucent hazard spheres use entry detection (one violation per entry,
+  not per frame) via `frontend/src/xr/clearance.ts`.
+- **Modes** — desktop works everywhere (orbit + click). VR/AR buttons are enabled only when
+  `navigator.xr` supports the mode; iOS Safari has no WebXR AR. VR can be tested with the
+  Meta Immersive Web Emulator.
+- **Persistence** — finished runs POST to `/api/xr/sessions`; the server recomputes the
+  verdict from the stored limits and lists them under "My training".
+
+Setup (after the normal backend seed and migration):
+
+```bash
+cd backend && npx prisma migrate dev --name xr_training && npm run db:seed:xr
+cd ../frontend && npm install && npm test && npm run dev   # open /xr
+```
+
+The first visit hydrates steps and scene metadata from `/api/xr/*`; if the API is cold or
+not seeded the page falls back to a cached six-step procedure so the demo still runs
+(saving is disabled while offline).
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/xr/scenes/:equipmentId` | Model URL, parts, hazard zones |
+| GET | `/api/xr/tests/:testId/script` | Typed steps + numeric limits |
+| POST | `/api/xr/sessions` | Save a run (server recomputes verdict/score) |
+| GET | `/api/xr/sessions/me` | The caller's saved runs |
+| GET | `/api/admin/xr-stats` | Runs and violations per test (admin) |
+
 ## Testing
 
 ```bash

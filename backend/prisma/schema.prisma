@@ -30,6 +30,12 @@ enum MessageRole {
   ASSISTANT
 }
 
+enum XrMode {
+  DESKTOP
+  VR
+  AR
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Models
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +48,7 @@ model User {
   role      Role          @default(ENGINEER)
   createdAt DateTime      @default(now())
   sessions  ChatSession[]
+  trainingSessions TrainingSession[]
 
   @@map("users")
 }
@@ -51,6 +58,7 @@ model Equipment {
   name        String  @unique
   description String?
   tests       Test[]
+  arScene     ArScene?
 
   @@map("equipment")
 }
@@ -67,6 +75,8 @@ model Test {
   tools           String[]
   standard        String?
   troubleshooting String?
+  arScript        ArScript?
+  trainingSessions TrainingSession[]
 
   @@map("tests")
 }
@@ -123,3 +133,70 @@ model Message {
   @@map("messages")
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XR Trainer (AR / VR / 3D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ArScene {
+  id          String    @id @default(uuid())
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipmentId String    @unique
+  modelUrl    String    @default("")
+  version     Int       @default(1)
+  parts       Json      @default("[]")
+  zones       Json      @default("[]")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("ar_scenes")
+}
+
+model ArScript {
+  id        String   @id @default(uuid())
+  test      Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  testId    String   @unique
+  limits    Json     @default("{\"r1MinMOhm\":1000,\"piMin\":1.5}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  steps     ArStep[]
+
+  @@map("ar_scripts")
+}
+
+model ArStep {
+  id       String   @id @default(uuid())
+  script   ArScript @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  scriptId String
+  stepNo   Int
+  type     String
+  target   String
+  action   String
+  value    String?
+  text     String
+
+  @@unique([scriptId, stepNo])
+  @@map("ar_steps")
+}
+
+model TrainingSession {
+  id         String    @id @default(uuid())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  test       Test      @relation(fields: [testId], references: [id], onDelete: Cascade)
+  testId     String
+  mode       XrMode
+  startedAt  DateTime
+  finishedAt DateTime?
+  stepsDone  Int
+  stepsTotal Int
+  violations Json      @default("[]")
+  readings   Json?
+  verdict    String?
+  score      Int
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([testId])
+  @@map("training_sessions")
+}

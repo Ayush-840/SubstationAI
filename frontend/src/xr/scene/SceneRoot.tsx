@@ -3,10 +3,13 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { XR, createXRStore, useXR } from '@react-three/xr'
 import { useTrainer } from '../store'
+import { useGLTF } from '@react-three/drei'
 import EquipmentModel from './EquipmentModel'
 import MeggerRig from './MeggerRig'
 import HazardZones from './HazardZones'
 import ArPlacement from './ArPlacement'
+
+useGLTF.setDecoderPath('/draco/')
 
 /** One store for the whole app; enterVR()/enterAR() are called from the page UI. */
 export const xrStore = createXRStore()

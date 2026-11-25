@@ -1,67 +1,92 @@
-# SubstationAI Backend
+# SubstationIQ Backend
 
-Express and Prisma API for substation equipment, test procedures, documents, and chat. AI answers and document ingestion remain stubs; no RAG, embeddings, vector queries, or LLM calls are included.
+Express 5 + PostgreSQL API for SubstationIQ. Plain `pg` driver, one SQL schema
+file, no ORM and no code-generation step.
 
-## Stack
+## Requirements
 
-Node.js, Express, PostgreSQL (Neon compatible), Prisma, JWT, bcrypt, Zod, Helmet, express-rate-limit, Swagger UI.
+- Node.js 20 LTS or newer
+- PostgreSQL 15 or newer (local, Neon, Supabase or Render)
 
 ## Setup
 
-1. Clone the repository and `cd backend`.
-2. Use PostgreSQL with the `pgvector` extension available (a local PostgreSQL install or Neon works).
-3. Run `npm install`.
-4. Copy `.env.example` to `.env` and set values.
-5. Enable pgvector on the target database with `psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS vector;'` (use a database owner/admin account if the app role cannot install extensions).
-6. Run `npx prisma migrate deploy`.
-7. Run `npx prisma generate`.
-8. Run `npm run seed`.
-9. Run `npm run dev`.
+```bash
+createdb substationiq
+cd backend
+npm install
+cp .env.example .env       # set DATABASE_URL and a 32+ character JWT_SECRET
+npm run migrate
+npm run seed               # safe to run more than once
+npm run dev                # http://localhost:4000/api/health
+```
 
-Interactive API docs: `http://localhost:4000/api/docs`; health check: `http://localhost:4000/api/health`.
+Generate a secret with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start with `node --watch` |
+| `npm start` | Start the API |
+| `npm run migrate` | Apply `sql/schema.sql` (idempotent) |
+| `npm run seed` | Create the admin and sample catalog (idempotent) |
+| `npm test` | Run the Vitest + Supertest suite |
 
 ## Environment variables
 
 | Variable | Purpose |
 |---|---|
+| `NODE_ENV` | `development`, `test` or `production` |
+| `PORT` | API port (default `4000`) |
 | `DATABASE_URL` | PostgreSQL connection string |
-| `PORT` | API port (default 4000) |
-| `NODE_ENV` | Runtime mode |
-| `JWT_SECRET` | JWT signing secret |
-| `JWT_EXPIRES_IN` | Token lifetime |
-| `CLIENT_URL` | Allowed browser origin |
-| `UPLOAD_DIR` | Document upload directory |
-| `MAX_FILE_SIZE_MB` | Upload size cap |
-| `RATE_LIMIT_WINDOW_MS` | General API rate window |
-| `RATE_LIMIT_MAX` | General API request cap |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Seed admin credentials |
+| `JWT_SECRET` | Signing secret, at least 32 characters |
+| `JWT_EXPIRES_IN` | Token lifetime (default `1d`) |
+| `FRONTEND_ORIGIN` | Allowed browser origin(s), comma separated |
+| `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Seed admin account |
 
 ## Layout
 
-`server.js` starts Express; `src/routes` maps endpoints; `src/controllers` handles HTTP; `src/services` contains chat/document workflows; `src/middleware` contains auth, validation, and limits; `src/ai/index.js` exports current stubs; `src/docs/openapi.js` defines API docs; `prisma` contains schema and seed data.
-
-## Endpoint summary
-
-- Auth: register, login, current user, change password
-- Equipment and tests: browse/search; ADMIN create, update, delete
-- Documents: browse; ADMIN upload, delete, reingest
-- Chat: sessions, standard chat, SSE at `/api/chat/stream`
-- Admin: statistics, user listing, role changes, user deletion
-
-## Roles
-
-New registrations receive `ENGINEER`. Engineers can browse and use chat. `ADMIN` users can manage equipment, tests, documents, and users. Admin routes require an authenticated ADMIN JWT.
-
-## Replacing AI stubs
-
-Person 2 can replace the stubs by changing **only** `src/ai/index.js` to export `getAnswer` and `ingestDocument` from `../rag/index.js`:
-
-```js
-export { getAnswer, ingestDocument } from "../rag/index.js";
+```
+backend/
+  sql/schema.sql
+  src/
+    app.js, server.js
+    config/env.js
+    db/{pool,migrate,seed}.js
+    middleware/{auth,error}.js
+    routes/{index,auth,users,equipment,tests,chat}.js
+    services/answer.js
+  tests/auth.test.js
 ```
 
-Keep that module contract stable.
+## Tests
 
-## Shared Neon database
+`npm test` uses `backend/.env.test`. Create it from the example, point its
+`DATABASE_URL` at a throwaway database (the default expects `substationiq_test`)
+and create that database first:
 
-Share the `.env` privately with teammates who need the shared Neon database. Never commit `.env` or send credentials in public channels.
+```bash
+cp .env.test.example .env.test
+createdb substationiq_test
+npm test
+```
+
+## Notes for the viva
+
+- **Why `pg` and plain SQL:** no generated client to drift or break; the schema
+  and every query are visible in the repo.
+- **JWT:** the payload is `{ sub, role }`; the server still re-reads the user on
+  every protected request, so deletes and role changes apply immediately.
+- **Role safety:** public registration never reads `role` from the body. Only an
+  admin can assign roles.
+- **Indexes:** `users (lower(email))` makes login lookups fast and enforces
+  case-insensitive uniqueness; `chat_sessions (user_id, updated_at DESC)` and
+  `messages (session_id, created_at)` support the chat list and history queries.
+- **Foreign keys:** deleting a user cascades to their sessions and messages;
+  deleting equipment cascades to its tests.
+
+See the root `README.md` for the ER diagram and full API table.

@@ -1,35 +1,32 @@
-import jwt from "jsonwebtoken";
-import { config } from "../config.js";
-import { prisma } from "../db.js";
+import jwt from 'jsonwebtoken';
+import { env } from '../config/env.js';
+import { query } from '../db/pool.js';
+import { AppError } from './error.js';
 
-/**
- * requireAuth — verifies the Bearer JWT and attaches req.user
- * req.user = { id, name, email, role }
- */
 export async function requireAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Authorization header missing or malformed" });
-  }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) throw new AppError(401, 'UNAUTHENTICATED', 'Login required');
 
-  const token = authHeader.slice(7);
   let payload;
   try {
-    payload = jwt.verify(token, config.jwtSecret);
+    payload = jwt.verify(token, env.JWT_SECRET);
   } catch {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    throw new AppError(401, 'INVALID_TOKEN', 'Invalid or expired token');
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.sub },
-    select: { id: true, name: true, email: true, role: true },
-  });
+  const { rows } = await query('SELECT id, name, email, role FROM users WHERE id = $1', [payload.sub]);
+  if (!rows[0]) throw new AppError(401, 'INVALID_TOKEN', 'User no longer exists');
 
-  if (!user) {
-    return res.status(401).json({ error: "User no longer exists" });
-  }
-
-  req.user = user;
+  req.user = rows[0];
   next();
 }
 
+export const requireRole =
+  (...roles) =>
+  (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return next(new AppError(403, 'FORBIDDEN', 'Not allowed'));
+    }
+    next();
+  };

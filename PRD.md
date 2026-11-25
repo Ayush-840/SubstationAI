@@ -1,81 +1,87 @@
-# PRD — SubstationIQ, 15-Day Capstone Compliance Sprint
+# PRD — SubstationIQ, ASD Viva Aligned
 
-Repo: [Ayush-840/SubstationAI](https://github.com/Ayush-840/SubstationAI) · Problem statement: Ministry of Power · 2023 · Software · Smart Education
-Team of 3 · Version 4.0 — **supersedes v3.0.** v3.0 assumed building the stack from zero. The repo already exists and works: FastAPI + SQLAlchemy + SQLite, Chroma + BM25 hybrid retrieval, NLP intent/entity layer, a 5-equipment-class test catalog, guided procedures, fault diagnosis with DGA rules, two roles (User/Admin), and an evaluation harness (30 cases, 34 backend tests, 100% intent accuracy, 93% entity accuracy). This document only covers what's **missing for full marks** and **new** against the three rubrics, built as a 15-day sprint on top of the working app.
+Stack: Node.js 20 · Express 5 · Prisma · PostgreSQL · Date: 25 Nov 2026
 
----
+This document covers the backend and database only, because that is what the viva grades.
+The AI answer logic sits behind one function, `getAnswer(question, history)`, so the
+retrieval and LLM work can grow later without touching the API layer.
 
-## 1. Why This Document Exists
+## 1.1 Purpose and scope
 
-Only 4 commits exist on `main` as of Oct 12. Development-consistency is graded daily and cannot be backdated (5 of 15 ISD marks). Everything below is scoped and sequenced so that **all three teammates commit something real every day for 15 days**, while closing the specific gaps below. Nothing already working is rebuilt or risked.
+SubstationIQ lets substation engineers browse equipment and test procedures and
+chat with an assistant about maintenance. This document covers the backend and
+database only, because that is what the viva grades. The AI answer logic sits
+behind one function, `getAnswer(question, history)`, so the retrieval and LLM work
+can grow later without touching the API layer.
 
-## 2. Gap Analysis Against the Rubrics
+## 1.2 Rubric traceability (what the project must contain)
 
-| Rubric | Current state | Gap | Addressed by |
-|---|---|---|---|
-| **DBMS — SQL (Rubric A)** | SQLite via SQLAlchemy; schema exists in code | No submitted ER diagram, no data dictionary, no documented representative query set | FR-1, Day 1–2 |
-| **DBMS — ORM (Rubric B)** | SQLAlchemy used for CRUD | No documentation of model-to-schema mapping, relationships, or raw-SQL justification | FR-1, Day 1–2 |
-| **DBMS — MongoDB (Rubric C)** | **Absent entirely** — a polyglot project with no NoSQL component likely scores the DBMS component on Rubric A alone, well under what a polyglot design could earn | FR-2, Day 2–5 |
-| **ASD — Authentication** | JWT login/logout exists | No refresh-token rotation or expiry/renewal story documented | FR-3, Day 6 |
-| **ASD — Authorization** | Two roles (User, Admin) | Fault diagnosis and DGA are engineer-level tools gated only by being logged in, not by role; no ownership checks documented | FR-4, Day 7 |
-| **ASD — API Design** | Endpoints work | No consistent envelope, no pagination/filtering/sorting on list endpoints, no versioning | FR-5, Day 6 |
-| **ASD — Security** | Basic auth | No rate limiting, no documented CORS/security-header policy | FR-6, Day 8 |
-| **ASD — Advanced Capabilities (≥2)** | SSE streaming + LLM integration already count as two | Add a third for headroom and to directly solve a real need | FR-7, Day 9–10 |
-| **ASD — Deployment & Docs** | Docker Compose locally | No public deployed link; no exported API/architecture docs | FR-8, Day 14 |
-| **Problem statement coverage** | Procedure, limits, troubleshooting, standards, equipment, safety all answered via chat | No dedicated **Result Checker** (enter a measured value, get a verdict against the catalog limit) — the most literal reading of "probable values/acceptable limits" in the problem statement | FR-9, Day 7–9 |
-| **ISD — Development Consistency** | 4 commits total | No daily cadence, no evidence of 3 contributors | Day-by-day plan below, all 15 days |
-
-## 3. New Features (Functional Requirements)
-
-| ID | Requirement | Rubric it earns marks under |
+| Viva question | What the project must have | Evidence to show on screen |
 |---|---|---|
-| FR-1 | ER diagram, data dictionary, and a documented set of real queries (joins, GROUP BY/HAVING, subquery or CTE) run by the actual app | DBMS A, B |
-| FR-2 | **MongoDB** for conversations, messages (with embedded citations), feedback, and fault logs — justified by access pattern, not mirrored from SQL | DBMS C |
-| FR-3 | Refresh-token rotation, revocation on logout, documented expiry | ASD Auth |
-| FR-4 | Three roles — **Trainee, Engineer, Admin** — enforced centrally; fault diagnosis and DGA require Engineer+; ownership checks on conversations/feedback/procedure runs | ASD AuthZ |
-| FR-5 | Response envelope, pagination/filtering/sorting on catalog and conversation-list endpoints, `/api/v1` versioning | ASD API Design |
-| FR-6 | Rate limiting on login and chat; CORS allow-list; security headers | ASD Security |
-| FR-7 | Redis cache for repeated catalog/answer lookups (third advanced capability, cuts LLM calls and latency) | ASD Advanced Capabilities |
-| FR-8 | Deployed public link; exported OpenAPI; README/architecture docs updated to match reality | ASD Deployment & Docs |
-| FR-9 | **Result Checker:** user enters equipment, test, measured value, unit → deterministic within/borderline/outside verdict against `test_limits`, with the cited limit | Product completeness; a live SQL query for the viva |
-| FR-10 | ER diagram and Mongo collection notes committed as `docs/DB.md`; RUBRIC_CHECKLIST.md kept current as evidence index | DBMS D (viva), overall traceability |
+| **Q1 Architecture and request life** | Routes → controllers → services → Prisma; versioned `/api/v1`; ordered middleware | Folder tree, `app.js`, one live POST `/chat` request with logs |
+| **Q2 REST design** | Resource URLs, correct verbs and status codes, zod validation, one error format, central handler | Endpoint list, one valid and one invalid request, `error.js` |
+| **Q3 Auth and access control** | Access token + refresh token, hashed passwords, roles, ownership checks | Login route, hashed password in DB, 401 / 403 / cross-user rejection |
+| **Q4 Security** | Helmet, CORS allow-list, three rate limiters, input sanitising, CSRF handling, secrets in `.env`, no leaks | Headers in a response, a live 429, `.gitignore`, `.env.example` |
+| **Q5 Database and non-blocking I/O** | Single Prisma client, migrations, idempotent seed, filtered and paginated list, no N+1 | Client file, migration folder, seed, query log with filters |
 
-## 4. Non-Goals for This Sprint
+## 1.3 Roles
 
-- **No migration off SQLite.** The SQL rubric does not require Postgres ("MySQL, PostgreSQL, SQLite, SQL Server, etc." are all acceptable); migrating a working, tested system under a 15-day deadline is a risk with no marks upside. Revisit only after submission if desired.
-- No new equipment classes or catalog content beyond what's needed to demo the Result Checker and Mongo features.
-- No Hindi/voice/OCR stretch features.
+- **USER:** register, log in, browse catalog, chat, give feedback, change own password.
+- **ADMIN:** all of the above plus manage users, equipment and tests, and view stats.
 
-## 5. Team and Daily-Commit Principle
+## 1.4 Functional requirements
 
-| Member | Owns in this sprint |
-|---|---|
-| **A — Data & Backend** | MongoDB integration, ER diagram, DB.md, RBAC, refresh tokens |
-| **B — API & Platform** | API envelope/pagination/versioning, rate limiting, security headers, Redis cache, deployment |
-| **C — Product & Frontend** | Result Checker UI + API, role-aware navigation, conversation history backed by Mongo, docs/README |
+| ID | Requirement | Priority |
+|---|---|---|
+| FR-1 | Register (always role USER; duplicate email gives 409) | P0 |
+| FR-2 | Login returns a short-lived access token and sets a refresh cookie | P0 |
+| FR-3 | Refresh rotates the refresh token; logout revokes it | P0 |
+| FR-4 | GET `/auth/me` | P0 |
+| FR-5 | Admin creates users, changes roles, deletes users (not self) | P0 |
+| FR-6 | Equipment CRUD (admin writes, users read) | P0 |
+| FR-7 | Tests CRUD linked to equipment; list with filter, sort, pagination | P0 |
+| FR-8 | Chat sessions CRUD, each visible only to its owner | P0 |
+| FR-9 | POST `/chat` stores the question and answer and returns answer plus sources | P0 |
+| FR-10 | Feedback on an assistant message (one per user per message, upsert) | P1 |
+| FR-11 | Health and readiness endpoints | P0 |
+| FR-12 | Seed script (admin, sample equipment and tests), safe to run repeatedly | P0 |
 
-Every day, every member pushes at least one meaningful, reviewable commit — a working slice, a test, a migration, or documentation — never a single end-of-sprint dump. See TRD.md §2 for the exact day-by-day breakdown and suggested commit messages.
+## 1.5 Non-functional requirements
 
-## 6. Success Criteria
+- Secure by default; one consistent error format; no stack traces in production;
+  responses under 300 ms on indexed queries; setup from a clean clone in under 10
+  minutes; every viva demo reproducible with one command.
 
-- `docs/DB.md` exists with an ER diagram, data dictionary, 5+ representative SQL queries actually used by the app, and Mongo collection notes with sample documents.
-- MongoDB holds conversations, messages, feedback, and fault logs; the SQL catalog remains the source of truth for limits.
-- Three roles are enforced and demonstrable; ownership checks pass tests.
-- `/api/v1` endpoints return a consistent envelope with pagination/filtering/sorting on at least catalog and conversation lists.
-- Rate limiting returns 429 on abuse of `/auth/login` and `/chat/stream`.
-- Redis cache measurably cuts repeat-query latency (shown in the eval report).
-- Result Checker returns correct verdicts against the existing `test_limits` table and is reachable from the UI.
-- App is deployed at a public URL; README reflects the actual stack.
-- Commit graph shows all three members committing on all 15 days.
+## 1.6 Acceptance criteria (this is also your demo checklist)
 
-## 7. Risks
+1. Clean clone: install, migrate, seed, run, with no manual fixes.
+2. Request with no token returns 401; a USER calling an admin route returns 403;
+   User A requesting User B's chat session is rejected.
+3. Duplicate register returns 409; invalid body returns 422 in the standard error format.
+4. Hitting the login route 11 times in 15 minutes returns 429.
+5. A list request with filter, sort and pagination shows the exact SQL in the log.
+6. A production-mode crash returns a generic message and no stack trace.
 
-| Risk | Mitigation |
-|---|---|
-| Mongo added late breaks the working eval suite | Mongo is additive (new collections for new data), not a replacement for the SQL catalog; run the existing 34-test suite after each merge |
-| RBAC change locks out existing demo users | Add the Engineer role via migration with a default mapping (existing non-admin users → Trainee), update seed data, re-run `pytest -q` before merging |
-| 15 days is tight for 3 people around other coursework | Daily tasks are intentionally small (1–3 hours); heavier items (Mongo setup, deployment) are frontloaded earlier in the sprint, lighter items (docs, tests, catalog data) fill the back half and weekends |
-| Rate limiting breaks the eval harness (30 rapid-fire calls) | Exempt the eval harness's service account or run it with limits raised via an env var in CI |
+## 1.7 Design decisions
 
-## 8. Disclaimer
-SubstationIQ is an informational aid and does not replace official procedures, OEM instructions, permits or trained personnel.
+- **Prisma over plain pg driver:** gives migrations, idempotent seed, query logging,
+  filtered/paginated lists, and N+1 avoidance via `include`/`select` — all with
+  very little code. Native bcrypt (async, thread pool) also satisfies Q5 on
+  non-blocking hashing.
+- **Express 5:** minimal, huge ecosystem, forwards async errors to the error
+  handler automatically.
+- **zod:** one schema validates body, params and query, and also validates env.
+- **Endpoint versioning:** all routes under `/api/v1`.
+- **Standard error format:** `{ error: { code, message, details, requestId } }`
+  everywhere, formatted by the central error handler.
+
+## 1.8 New features (compared to old FastAPI+SQLite baseline)
+
+| ID | Feature | Rubric |
+|---|---|---|
+| FR-12 | Prisma schema with migrations and idempotent seed script | DBMS B |
+| FR-13 | zod-validated environment env file | Q1, Q5 |
+| FR-14 | Three rate limiters (global, login/register, chat) | Q4 |
+| FR-15 | Standard error envelope with requestId | Q2, Q4 |
+| FR-16 | Refresh token rotation + revocation on logout | Q3 |
+| FR-17 | Ownership checks via `user_id` filter in every chat/query operation | Q3, Q5 |

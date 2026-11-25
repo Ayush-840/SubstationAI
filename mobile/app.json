@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "SubstationIQ",
+    "slug": "substationiq-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "SubstationIQ uses the camera to capture equipment nameplates and fault conditions for diagnosis."
+      }
+    },
+    "android": {
+      "permissions": ["android.permission.CAMERA"],
+      "adaptiveIcon": { "backgroundColor": "#f4f5ef" }
+    },
+    "plugins": [
+      ["expo-camera", { "cameraPermission": "Allow SubstationIQ to photograph equipment for diagnosis." }]
+    ]
+  }
+}

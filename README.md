@@ -178,6 +178,18 @@ Full detail lives in [docs/TRD.md](docs/TRD.md).
 | Evaluation | RAGAS / custom LLM-judge scripts |
 | DevOps | Docker, Docker Compose |
 
+### Mobile app
+
+The native iOS and Android companion app lives in [`mobile/`](mobile/README.md) and uses Expo + React Native. It opens directly into a no-login demo portal with sample equipment and procedure data, and includes native camera capture for diagnosis notes. A saved backend session can load live catalog data. Start it with:
+
+```bash
+cd mobile
+npm install
+npm start
+```
+
+The web app remains in `frontend/`. Camera capture is available on a physical device or a camera-enabled simulator; the backend does not process image attachments. Demo content is illustrative and not for live field decisions.
+
 ## Getting Started
 
 ### Prerequisites
